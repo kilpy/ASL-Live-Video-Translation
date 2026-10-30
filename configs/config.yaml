@@ -1,0 +1,50 @@
+# Single source of truth for experiments. `data` is shared by every approach so
+# splits and preprocessing stay identical (Experiment Card field 5).
+data:
+  root: data/how2sign  # override with the ASL_DATA_ROOT env var (e.g. on the cluster)
+  fps: 15
+  view: frontal
+  splits: [train, val, test]
+  # Unofficial mirror of https://how2sign.github.io/ (CC BY-NC 4.0, research use only).
+  # Google Drive's quotas blocked the official links. Pinned so everyone gets the same bytes.
+  hub:
+    repo: aipieces/How2Sign
+    revision: 1231830fc1e8d77555a245ca22353b144e168111
+  sources:
+    annotations:  # manually re-aligned English translations
+      train: {file: how2sign_realigned_train.csv, gb: 0.006}
+      val: {file: how2sign_realigned_val.csv, gb: 0.001}
+      test: {file: how2sign_realigned_test.csv, gb: 0.001}
+    clips:  # frontal RGB clips, cut with the original (not re-aligned) How2 timestamps
+      train: {file: original/green-screen-rgb-clips-frontal-view/train_rgb_front_clips.zip, gb: 33.1}
+      val: {file: original/green-screen-rgb-clips-frontal-view/val_rgb_front_clips.zip, gb: 1.8}
+      test: {file: original/green-screen-rgb-clips-frontal-view/test_rgb_front_clips.zip, gb: 2.5}
+
+seeds: [0, 1, 2]
+
+# Encoders and decoders are plug-ins: add an entry here, then reference it by name below.
+encoders:
+  pose_gru:
+    features: landmarks
+    pretrained: false
+  dinov2_shubert:
+    features: crops_and_pose
+    pretrained: true
+    frozen: true
+
+decoders:
+  rnn:
+    cell: gru
+    attention: true
+    pretrained: false
+  transformer:
+    pretrained: false
+  byt5:
+    pretrained: true
+    frozen: false  # fine-tuned on How2Sign
+
+# An approach is one encoder plus one decoder. Outputs go to runs/<APPROACH>/seed_<n>/.
+approaches:
+  CLASSICAL: {encoder: pose_gru, decoder: rnn}
+  BASELINE: {encoder: pose_gru, decoder: transformer}
+  DEEP: {encoder: dinov2_shubert, decoder: byt5, fusion: true}

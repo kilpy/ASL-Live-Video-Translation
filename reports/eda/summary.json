@@ -1,0 +1,236 @@
+{
+  "splits_present": [
+    "train",
+    "val",
+    "test"
+  ],
+  "columns": [
+    "VIDEO_ID",
+    "VIDEO_NAME",
+    "SENTENCE_ID",
+    "SENTENCE_NAME",
+    "START_REALIGNED",
+    "END_REALIGNED",
+    "SENTENCE"
+  ],
+  "vocab_source_split": "train",
+  "vocab_size": 15434,
+  "top_words": [
+    "the",
+    "to",
+    "and",
+    "you",
+    "a",
+    "of",
+    "that",
+    "is",
+    "it",
+    "in",
+    "your",
+    "going",
+    "this",
+    "so",
+    "on",
+    "i",
+    "have",
+    "can",
+    "with",
+    "are"
+  ],
+  "per_split": {
+    "train": {
+      "sentences": 31165,
+      "share_of_present_sentences": 0.884,
+      "videos": 2192,
+      "sentences_per_video": {
+        "p5": 5.0,
+        "p50": 13.0,
+        "p95": 29.0,
+        "p99": 41.09,
+        "max": 76.0
+      },
+      "empty_sentences": 0,
+      "duplicate_sentence_ids": 0,
+      "repeated_sentence_text": 1056,
+      "nonpositive_durations": 0,
+      "total_hours": 59.33,
+      "duration_seconds": {
+        "p5": 1.1,
+        "p50": 5.27,
+        "p95": 17.63,
+        "p99": 28.51,
+        "max": 143.03
+      },
+      "frames_at_15fps": {
+        "p5": 16.5,
+        "p50": 79.05,
+        "p95": 264.45,
+        "p99": 427.7,
+        "max": 2145.45
+      },
+      "words_per_sentence": {
+        "p5": 4.0,
+        "p50": 15.0,
+        "p95": 41.0,
+        "p99": 62.0,
+        "max": 195.0
+      },
+      "vocab_coverage": {
+        "500": {
+          "tokens": 0.7889,
+          "sentences": 0.0936
+        },
+        "1000": {
+          "tokens": 0.854,
+          "sentences": 0.1773
+        },
+        "2000": {
+          "tokens": 0.9093,
+          "sentences": 0.3203
+        },
+        "5000": {
+          "tokens": 0.9643,
+          "sentences": 0.6098
+        },
+        "10000": {
+          "tokens": 0.9902,
+          "sentences": 0.8596
+        }
+      }
+    },
+    "val": {
+      "sentences": 1741,
+      "share_of_present_sentences": 0.049,
+      "videos": 115,
+      "sentences_per_video": {
+        "p5": 5.0,
+        "p50": 13.0,
+        "p95": 32.0,
+        "p99": 37.72,
+        "max": 38.0
+      },
+      "empty_sentences": 0,
+      "duplicate_sentence_ids": 0,
+      "repeated_sentence_text": 225,
+      "nonpositive_durations": 0,
+      "total_hours": 3.34,
+      "duration_seconds": {
+        "p5": 1.1,
+        "p50": 5.7,
+        "p95": 17.31,
+        "p99": 24.15,
+        "max": 57.99
+      },
+      "frames_at_15fps": {
+        "p5": 16.5,
+        "p50": 85.5,
+        "p95": 259.65,
+        "p99": 362.25,
+        "max": 869.85
+      },
+      "words_per_sentence": {
+        "p5": 3.0,
+        "p50": 15.0,
+        "p95": 41.0,
+        "p99": 55.0,
+        "max": 103.0
+      },
+      "vocab_coverage": {
+        "500": {
+          "tokens": 0.7916,
+          "sentences": 0.1017
+        },
+        "1000": {
+          "tokens": 0.8489,
+          "sentences": 0.1717
+        },
+        "2000": {
+          "tokens": 0.9031,
+          "sentences": 0.3021
+        },
+        "5000": {
+          "tokens": 0.9484,
+          "sentences": 0.4986
+        },
+        "10000": {
+          "tokens": 0.9714,
+          "sentences": 0.66
+        }
+      }
+    },
+    "test": {
+      "sentences": 2357,
+      "share_of_present_sentences": 0.067,
+      "videos": 149,
+      "sentences_per_video": {
+        "p5": 4.0,
+        "p50": 13.0,
+        "p95": 35.2,
+        "p99": 48.24,
+        "max": 64.0
+      },
+      "empty_sentences": 0,
+      "duplicate_sentence_ids": 0,
+      "repeated_sentence_text": 419,
+      "nonpositive_durations": 0,
+      "total_hours": 4.35,
+      "duration_seconds": {
+        "p5": 0.85,
+        "p50": 5.23,
+        "p95": 17.5,
+        "p99": 26.67,
+        "max": 45.79
+      },
+      "frames_at_15fps": {
+        "p5": 12.72,
+        "p50": 78.45,
+        "p95": 262.5,
+        "p99": 400.1,
+        "max": 686.85
+      },
+      "words_per_sentence": {
+        "p5": 3.0,
+        "p50": 15.0,
+        "p95": 42.0,
+        "p99": 64.0,
+        "max": 115.0
+      },
+      "vocab_coverage": {
+        "500": {
+          "tokens": 0.7854,
+          "sentences": 0.1022
+        },
+        "1000": {
+          "tokens": 0.8452,
+          "sentences": 0.1812
+        },
+        "2000": {
+          "tokens": 0.8965,
+          "sentences": 0.2995
+        },
+        "5000": {
+          "tokens": 0.9462,
+          "sentences": 0.4994
+        },
+        "10000": {
+          "tokens": 0.9691,
+          "sentences": 0.6517
+        }
+      }
+    }
+  },
+  "cross_split": {
+    "train/val": {
+      "shared_videos": 0,
+      "shared_sentence_text": 33
+    },
+    "train/test": {
+      "shared_videos": 0,
+      "shared_sentence_text": 44
+    },
+    "val/test": {
+      "shared_videos": 0,
+      "shared_sentence_text": 14
+    }
+  }
+}
