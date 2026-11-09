@@ -51,3 +51,15 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.use_deterministic_algorithms(True, warn_only=True)
     torch.backends.cudnn.benchmark = False
+
+def get_device(preference: str = "auto"):
+    """Return a torch.device: `preference` if given, else mps, then cuda, then cpu."""
+    import torch
+
+    if preference != "auto":
+        return torch.device(preference)
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")

@@ -44,6 +44,7 @@ data:
 seeds: [0, 1, 2]
 
 training:
+  device: auto   # mps on Apple Silicon, cuda if available, else cpu
   epochs: 30
   batch_size: 32
   lr: 3.0e-4
