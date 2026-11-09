@@ -44,6 +44,20 @@ The smoke test is exactly reproducible on CPU. Full runs on Apple MPS can differ
 repeats because some MPS kernels (for example the embedding backward pass) are not deterministic;
 the comparison table reports the spread across 3 seeds for this reason.
 
+## Results
+
+| Approach | Run | Train | Val | BLEU | Mean confidence | Device | Commit |
+|---|---|---|---|---|---|---|---|
+| BASELINE | Smoke | 50 | 10 | 0.00 | 0.09 | CPU | 011e59b |
+| BASELINE | Full, seed 0 | 1,994 | 298 | 0.51 | 0.47 | MPS | `<short hash>` |
+
+Every number traces to a line in `reports/results.jsonl` with its commit and data hash. The BASELINE
+produces fluent instructional English that is mostly unrelated to the signing: the decoder learns
+the language of How2Sign, but the pose encoder contributes little. Confidence (0.47) far exceeds
+accuracy, so the model is badly calibrated. Next: val-loss early stopping, BLEURT, seeds 1 and 2,
+and pretrained SHuBERT features (DEEP).
+
+
 ## Data
 
 [How2Sign](https://how2sign.github.io/) (CC BY-NC 4.0, research use only; license and citation in

@@ -128,6 +128,7 @@ def main() -> None:
     train_cfg = {**cfg["training"], **(cfg["training"]["smoke"] if args.smoke else {})}
     device = get_device(train_cfg["device"])
     data, started = cfg["data"], time.time()
+    commit, dirty = git("rev-parse", "HEAD"), bool(git("status", "--porcelain"))
 
     used = ensure_data(data, args.smoke)
     itos = [PAD, BOS, EOS, UNK] + (data["processed"] / "splits" / "vocab.txt").read_text().split()
@@ -184,8 +185,8 @@ def main() -> None:
         "n_eval": len(splits["val"]),
         "bleu": metrics["bleu"],
         "mean_confidence": metrics["mean_confidence"],
-        "commit": git("rev-parse", "HEAD"),
-        "dirty": bool(git("status", "--porcelain")),
+        "commit": commit,
+        "dirty": dirty,
         "config_sha256": hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest(),
         "data_sha256": hashlib.sha256("".join(manifest[k] for k in data_keys).encode()).hexdigest(),
         "data": data_keys,
@@ -200,8 +201,8 @@ def main() -> None:
     print(json.dumps(result, indent=2))
     for reference, hypothesis in metrics["examples"]:
         print(f"  ref: {reference}\n  hyp: {hypothesis}")
-    if result["dirty"]:
-        print("Warning: uncommitted changes; commit before logging a result you will report.")
+    if dirty:
+        print("Warning: uncommitted changes at start; commit before logging a result you will report.")
 
 
 if __name__ == "__main__":
