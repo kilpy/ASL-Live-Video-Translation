@@ -58,7 +58,8 @@ def record(paths: list[Path], extra: dict | None = None, path: Path = MANIFEST_P
         manifest["files"][manifest_key(p)] = sha256(p)
     manifest["files"] = dict(sorted(manifest["files"].items()))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    # newline="\n": the same bytes on every OS, so hashes never depend on line endings
+    path.write_text(json.dumps(manifest, indent=2) + "\n", newline="\n")
 
 
 def verify(paths: list[Path], path: Path = MANIFEST_PATH) -> None:
@@ -91,7 +92,12 @@ def load_annotations(data: dict, split: str) -> pd.DataFrame:
     return df
 
 
-def download_annotations(data: dict) -> None:
+def download_annotations(data: dict, update_manifest: bool = True) -> None:
+    """Fetch the re-aligned CSVs if missing.
+
+    update_manifest=True (dataset.py) records their hashes; training passes False, so a
+    reproduction run only reads the committed manifest and verify() checks the files against it.
+    """
     from huggingface_hub import hf_hub_download
 
     hub = data["source_hub"]
@@ -102,12 +108,13 @@ def download_annotations(data: dict) -> None:
             hf_hub_download(repo_id=hub["repo"], repo_type="dataset", revision=hub["revision"],
                             filename=path.name, local_dir=data["raw"])
         paths.append(path)
-    source = {"repo": hub["repo"], "revision": hub["revision"], "license": "CC BY-NC 4.0",
-              "homepage": "https://how2sign.github.io/"}
-    previous = read_manifest()
-    retrieved = previous.get("retrieved") if previous.get("source") == source else None
-    record(paths, {"source": source, "retrieved": retrieved or date.today().isoformat()})
-    print(f"Annotations in {data['raw']}; hashes in {MANIFEST_PATH.relative_to(REPO_ROOT)}")
+    if update_manifest:
+        source = {"repo": hub["repo"], "revision": hub["revision"], "license": "CC BY-NC 4.0",
+                  "homepage": "https://how2sign.github.io/"}
+        previous = read_manifest()
+        retrieved = previous.get("retrieved") if previous.get("source") == source else None
+        record(paths, {"source": source, "retrieved": retrieved or date.today().isoformat()})
+        print(f"Annotations in {data['raw']}; hashes in {MANIFEST_PATH.relative_to(REPO_ROOT)}")
 
 
 # ---------------------------------------------------------------- step 2: video index
@@ -139,7 +146,7 @@ def build_video_index(data: dict) -> None:
             print(f"{shard}: {len(index[split])} {split} videos so far")
     path = video_index_path(data)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(index, indent=1, sort_keys=True) + "\n")
+    path.write_text(json.dumps(index, indent=1, sort_keys=True) + "\n", newline="\n")
     record([path])
     sample = next(iter(index["val"]))
     total = sum(map(len, index.values()))
@@ -222,10 +229,10 @@ def build_splits(data: dict) -> None:
     out = data["processed"] / "splits"
     out.mkdir(parents=True, exist_ok=True)
     paths = [out / "vocab.txt"]
-    paths[0].write_text("\n".join(vocab) + "\n")
+    paths[0].write_text("\n".join(vocab) + "\n", newline="\n")
     for name, df in chosen.items():
         path = out / f"{name}.txt"
-        path.write_text("\n".join(df["SENTENCE_NAME"]) + "\n")
+        path.write_text("\n".join(df["SENTENCE_NAME"]) + "\n", newline="\n")
         paths.append(path)
         print(f"{name}: {len(df)} sentences from {df['VIDEO_NAME'].nunique()} videos")
     record(paths)

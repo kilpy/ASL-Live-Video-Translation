@@ -37,7 +37,7 @@ LEFT_SHOULDER, RIGHT_SHOULDER = 1, 2  # positions within the 7 kept pose points
 def ensure_data(data: dict, smoke: bool) -> list[Path]:
     """Fetch anything missing (annotations, splits, landmarks), then check every hash."""
     if not all(annotation_path(data, s).exists() for s in ("train", "val")):
-        download_annotations(data)
+        download_annotations(data, update_manifest=False)
     processed = data["processed"]
     folders = (["smoke/train", "smoke/val"] if smoke
                else ["landmarks/train", "landmarks/val"])
@@ -190,7 +190,9 @@ def main() -> None:
         "mean_confidence": metrics["mean_confidence"],
         "commit": commit,
         "dirty": dirty,
-        "config_sha256": hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest(),
+        # normalize line endings: Windows checkouts use CRLF, which would change a raw-byte hash
+        "config_sha256": hashlib.sha256(
+            CONFIG_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
         "data_sha256": hashlib.sha256("".join(manifest[k] for k in data_keys).encode()).hexdigest(),
         "data": data_keys,
         "device": str(device),
