@@ -29,7 +29,7 @@ data:
 
   # Subset selection (dataset.py). Vocabulary comes from train only.
   vocab_size: 1000
-  n_train_sentences: 800  # whole videos, most covered sentences first, to limit downloads
+  n_train_sentences: 2000  # whole videos, most covered sentences first, to limit downloads
   n_val_sentences: null   # null keeps every covered val sentence
   split_seed: 0
   smoke: {train: 50, val: 10}  # the test split is never in the smoke set
