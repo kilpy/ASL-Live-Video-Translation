@@ -26,11 +26,17 @@ from asl_translate.config import MANIFEST_PATH, REPO_ROOT, load_config
 
 
 def sha256(path: Path) -> str:
-    """Hash of a file, or of a folder's file names and hashes (so one entry covers a folder)."""
+    """Hash of a file, or of a folder's file names and hashes (so one entry covers a folder).
+
+    Folder entries are sorted by their POSIX path string, not by Path objects, because Windows
+    compares paths case-insensitively and would combine the same files in a different order.
+    """
     path = Path(path)
     digest = hashlib.sha256()
     if path.is_dir():
-        for f in sorted(p for p in path.rglob("*") if p.is_file()):
+        files = sorted((p for p in path.rglob("*") if p.is_file()),
+                       key=lambda p: p.relative_to(path).as_posix())
+        for f in files:
             digest.update(f"{f.relative_to(path).as_posix()}:{sha256(f)}\n".encode())
         return digest.hexdigest()
     with open(path, "rb") as f:
