@@ -23,7 +23,7 @@ twice gives the same numbers.
 The full run trains on every extracted train sentence and evaluates on val:
 
 ```bash
-uv run python -m asl_translate.models.train            # device: mps, then cuda, then cpu
+uv run python -m asl_translate.models.train --device cpu   # exactly reproducible; omit for mps/cuda
 ```
 
 Tests and lint: `uv run pytest` and `uv run ruff check .`
@@ -48,8 +48,8 @@ the comparison table reports the spread across 3 seeds for this reason.
 
 | Approach | Run | Train | Val | BLEU | Mean confidence | Device | Commit |
 |---|---|---|---|---|---|---|---|
-| BASELINE | Smoke | 50 | 10 | 0.00 | 0.09 | CPU | 011e59b |
-| BASELINE | Full, seed 0 | 1,994 | 298 | 0.51 | 0.47 | MPS | `<short hash>` |
+| BASELINE | Smoke | 50 | 10 | 0.00 | 0.09 | CPU | `011e59b` |
+| BASELINE | Full, seed 0 | 1,994 | 298 | 1.29 | 0.46 | CPU | `ad04be0` |
 
 Every number traces to a line in `reports/results.jsonl` with its commit and data hash. The BASELINE
 produces fluent instructional English that is mostly unrelated to the signing: the decoder learns
