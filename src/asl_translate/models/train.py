@@ -66,7 +66,7 @@ def normalize(points: np.ndarray) -> np.ndarray:
 def load_split(folder: Path, sentences: dict[str, str], words: dict[str, int],
                max_frames: int, max_tokens: int) -> list[tuple[np.ndarray, list[int], str]]:
     examples = []
-    for path in sorted(folder.glob("*.npz")):
+    for path in sorted(folder.glob("*.npz"), key=lambda p: p.name):  # same order on every OS
         with np.load(path) as f:
             points, detected = f["points"].astype(np.float32), f["detected"].astype(np.float32)
         features = np.concatenate([normalize(points).reshape(len(points), -1), detected], axis=1)
