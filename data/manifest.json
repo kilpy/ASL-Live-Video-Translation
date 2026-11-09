@@ -1,0 +1,21 @@
+{
+  "files": {
+    "processed/splits/smoke_train.txt": "7d5483e9e15686b9975886a0ffc6a5fa9cf05bd0fce6f044ef12de0133dd6e7d",
+    "processed/splits/smoke_val.txt": "03912e8b34975a6714d866082907b8d27bc7ceecc356e8c0cd1454b997a0aa58",
+    "processed/splits/test.txt": "6a81b7831e6bb8b02b495e53e8fdfb5e45d7aee00e7c117b1cb09b3268a29afe",
+    "processed/splits/train.txt": "3eb0c68d2eb3a571092c75b53b3b71f78860b01f7024cd28d0296ed5a8a1764a",
+    "processed/splits/val.txt": "c4c045153d80351dcb7c5501d15e40118fe19dde167570678cf9df09d83282d7",
+    "processed/splits/vocab.txt": "bca9dca75dbb56d36a84a807ddccb8e465f58d06c7fa21106146e1283b03a35f",
+    "processed/video_index.json": "bebbcdd8669790367af5395ca3ddbc47a06563233f07890adbe4614c680fc488",
+    "raw/how2sign_realigned_test.csv": "d1799dcbf100eda822eeb1a0e6e754d82b12b2a57756bd47073c4e4b8a02ae4d",
+    "raw/how2sign_realigned_train.csv": "67a8f4fb6dc066f38006b89ac84c27a4b05d7fa07d5e6952f997042724d7a847",
+    "raw/how2sign_realigned_val.csv": "1bf5d57ce90d61571776d06a179335d99648d8c94fc22b327d2abb328d26137c"
+  },
+  "source": {
+    "repo": "aipieces/How2Sign",
+    "revision": "1231830fc1e8d77555a245ca22353b144e168111",
+    "license": "CC BY-NC 4.0",
+    "homepage": "https://how2sign.github.io/"
+  },
+  "retrieved": "2026-11-09"
+}

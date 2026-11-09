@@ -31,3 +31,16 @@ def test_read_frames_resamples_24fps_source_to_15fps_with_rising_timestamps(tmp_
     timestamps = [t for t, _ in read_frames(path, 15)]
     assert len(timestamps) == 30
     assert timestamps == sorted(set(timestamps))
+
+
+
+def test_read_frames_cuts_between_start_and_end_seconds(tmp_path):
+    path = tmp_path / "video.mp4"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30, (64, 64))
+    for _ in range(300):  # 10 s
+        writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+    writer.release()
+
+    timestamps = [t for t, _ in read_frames(path, 15, start=2.0, end=4.0)]
+    assert timestamps[0] == 2000 and timestamps[-1] == 4000
+    assert len(timestamps) == 31  # 2 s at 15 fps, both ends included
