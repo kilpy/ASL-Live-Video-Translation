@@ -120,13 +120,14 @@ def main() -> None:
     parser.add_argument("--approach", default="BASELINE")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seed", type=int, default=None, help="default: first seed in config")
+    parser.add_argument("--device", default=None, help="override training.device: cpu, mps, cuda, or auto")
     args = parser.parse_args()
 
     cfg = load_config(args.approach)
     seed = cfg["seeds"][0] if args.seed is None else args.seed
     set_seed(seed)
     train_cfg = {**cfg["training"], **(cfg["training"]["smoke"] if args.smoke else {})}
-    device = get_device(train_cfg["device"])
+    device = get_device(args.device or train_cfg["device"])
     data, started = cfg["data"], time.time()
     commit, dirty = git("rev-parse", "HEAD"), bool(git("status", "--porcelain"))
 
