@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 
 from asl_translate.config import CONFIG_PATH, REPO_ROOT, get_device, load_config, set_seed
 from asl_translate.dataset import (annotation_path, download_annotations, load_annotations,
-                                   read_manifest, tokenize, verify)
+                                      manifest_key, read_manifest, tokenize, verify)
 from asl_translate.models.baseline import Seq2Seq
 
 RESULTS = REPO_ROOT / "reports" / "results.jsonl"
@@ -177,7 +177,7 @@ def main() -> None:
     torch.save(model.state_dict(), run_dir / "model.pt")
 
     manifest = read_manifest()["files"]
-    data_keys = sorted(str(p.relative_to(data["root"])) for p in used)
+    data_keys = sorted(manifest_key(p) for p in used)
     result = {
         "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "approach": args.approach,
