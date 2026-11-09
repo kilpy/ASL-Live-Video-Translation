@@ -12,6 +12,8 @@ dependencies = [
     "pandas>=3.1.0",
     "matplotlib>=3.11.2",
     "huggingface-hub>=2.4.0",
+    "torch",
+    "sacrebleu",
 ]
 
 [dependency-groups]
@@ -23,6 +25,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/asl_translate"]
+
+# PyPI's torch is CPU-only on Windows; take the CUDA build there for Nvidia GPUs.
+# macOS (MPS) and Linux use PyPI.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cuda", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 line-length = 100
