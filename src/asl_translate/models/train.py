@@ -129,7 +129,9 @@ def main() -> None:
     train_cfg = {**cfg["training"], **(cfg["training"]["smoke"] if args.smoke else {})}
     device = get_device(args.device or train_cfg["device"])
     data, started = cfg["data"], time.time()
-    commit, dirty = git("rev-parse", "HEAD"), bool(git("status", "--porcelain"))
+    commit = git("rev-parse", "HEAD")
+    # the results log itself is expected to change between runs, so it doesn't count as dirty
+    dirty = bool(git("status", "--porcelain", "--", ".", ":!reports/results.jsonl"))
 
     used = ensure_data(data, args.smoke)
     itos = [PAD, BOS, EOS, UNK] + (data["processed"] / "splits" / "vocab.txt").read_text().split()
