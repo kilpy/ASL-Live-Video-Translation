@@ -1,32 +1,71 @@
 # Single source of truth for experiments. `data` is shared by every approach so
 # splits and preprocessing stay identical (Experiment Card field 5).
 data:
-  root: data/how2sign  # override with the ASL_DATA_ROOT env var (e.g. on the cluster)
-  fps: 15
+  root: data  # CCDS layout: raw/, interim/, processed/. Override with ASL_DATA_ROOT.
+  fps: 15     # matches SHuBERT's ~15 fps (every other frame)
   view: frontal
   splits: [train, val, test]
+
   # Unofficial mirror of https://how2sign.github.io/ (CC BY-NC 4.0, research use only).
   # Google Drive's quotas blocked the official links. Pinned so everyone gets the same bytes.
-  hub:
+  source_hub:
     repo: aipieces/How2Sign
     revision: 1231830fc1e8d77555a245ca22353b144e168111
   sources:
-    annotations:  # manually re-aligned English translations
-      train: {file: how2sign_realigned_train.csv, gb: 0.006}
-      val: {file: how2sign_realigned_val.csv, gb: 0.001}
-      test: {file: how2sign_realigned_test.csv, gb: 0.001}
-    clips:  # frontal RGB clips, cut with the original (not re-aligned) How2 timestamps
-      train: {file: original/green-screen-rgb-clips-frontal-view/train_rgb_front_clips.zip, gb: 33.1}
-      val: {file: original/green-screen-rgb-clips-frontal-view/val_rgb_front_clips.zip, gb: 1.8}
-      test: {file: original/green-screen-rgb-clips-frontal-view/test_rgb_front_clips.zip, gb: 2.5}
+    annotations:  # manually re-aligned English translations; timestamps index the full videos
+      train: {file: how2sign_realigned_train.csv}
+      val: {file: how2sign_realigned_val.csv}
+      test: {file: how2sign_realigned_test.csv}
+    videos:  # full frontal green-screen videos, sharded zips; segments cut at *_REALIGNED times
+      train: {dir: train_raw_videos}
+      val: {dir: val_raw_videos}
+      test: {dir: test_raw_videos}
+
+  # Our processed data (splits, video index, landmarks, smoke subset). Public, no token needed.
+  # Revision is the commit printed by upload.py; update it whenever the data changes.
+  processed_hub:
+    repo: ASL-Live-Video-Translation/how2sign-realigned-mediapipe
+    revision: null  # set after the first upload
+
+  # Subset selection (dataset.py). Vocabulary comes from train only.
+  vocab_size: 1000
+  n_train_sentences: 800  # picked from as few videos as possible
+  split_seed: 0
+  smoke: {train: 50, val: 10}  # the test split is never in the smoke set
+
+  # Features kept per frame, SHuBERT-style: 7 upper-body points + both hands, x and y only.
+  features:
+    pose_points: [0, 11, 12, 13, 14, 15, 16]  # nose, shoulders, elbows, wrists
+    hands: true
+    coords: [x, y]
+    interpolate_missing: true
 
 seeds: [0, 1, 2]
+
+training:
+  epochs: 30
+  batch_size: 32
+  lr: 3.0e-4
+  weight_decay: 0.01
+  label_smoothing: 0.1
+  max_frames: 300  # about p95 of sentence length at 15 fps
+  max_tokens: 64
+  smoke: {epochs: 3, batch_size: 8, device: cpu}
+
+metrics:
+  primary: bleurt
+  bleurt_checkpoint: BLEURT-20-D3  # small enough for CPU; full runs may use BLEURT-20
+  also: [sacrebleu]
 
 # Encoders and decoders are plug-ins: add an entry here, then reference it by name below.
 encoders:
   pose_gru:
     features: landmarks
     pretrained: false
+    hidden: 128        # per direction
+    layers: 2
+    bidirectional: true
+    dropout: 0.1
   dinov2_shubert:
     features: crops_and_pose
     pretrained: true
@@ -39,11 +78,16 @@ decoders:
     pretrained: false
   transformer:
     pretrained: false
+    d_model: 256
+    layers: 3
+    heads: 4
+    ff: 512
+    dropout: 0.1
   byt5:
     pretrained: true
     frozen: false  # fine-tuned on How2Sign
 
-# An approach is one encoder plus one decoder. Outputs go to runs/<APPROACH>/seed_<n>/.
+# An approach is one encoder plus one decoder. Outputs go to models/<APPROACH>/seed_<n>/.
 approaches:
   CLASSICAL: {encoder: pose_gru, decoder: rnn}
   BASELINE: {encoder: pose_gru, decoder: transformer}
