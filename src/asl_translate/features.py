@@ -98,8 +98,10 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
         for name, start, end in sentences:
             holistic_path, model_path = paths_for(data, split, name)
             holistic = extract(read_frames(tmp, data["fps"], start=start, end=end))
-            if len(holistic) == 0:
-                raise ValueError(f"{name}: no frames between {start:.2f}s and {end:.2f}s")
+            if len(holistic) == 0:  # segment shorter than one frame, or past the video's end
+                print(f"skipped {name}: no frames between {start:.2f}s and {end:.2f}s",
+                      flush=True)
+                continue
             holistic_path.parent.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
             model_path.parent.mkdir(parents=True, exist_ok=True)

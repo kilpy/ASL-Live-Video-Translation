@@ -11,7 +11,7 @@ data/*
 !data/manifest.json
 
 # Models, checkpoints, MediaPipe weights
-models/
+/models/
 *.pt
 *.onnx
 *.task

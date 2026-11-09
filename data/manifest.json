@@ -1,5 +1,9 @@
 {
   "files": {
+    "processed/landmarks/train": "683a51e5a1d3d2d41b06850661b8bce6cfdf2c0a83ab28627e5e3bbcbf19dde2",
+    "processed/landmarks/val": "dffacff90dc2bface0ef80bd62ffb014909ed57ea59b50c136dfc53f1d7688fe",
+    "processed/smoke/train": "df120d84bd76009fdb83074f4cd7cf954bb6e6a5f23c667c95aa5dbf0879eacf",
+    "processed/smoke/val": "8098d0c386ad7678a8fd5d7308b980623d29502b19afc974db8379c2bed0ec6b",
     "processed/splits/smoke_train.txt": "13df441cd94960e13dfdddd225409bb89b823451cc8f33639b69b4da410d128a",
     "processed/splits/smoke_val.txt": "03912e8b34975a6714d866082907b8d27bc7ceecc356e8c0cd1454b997a0aa58",
     "processed/splits/test.txt": "6a81b7831e6bb8b02b495e53e8fdfb5e45d7aee00e7c117b1cb09b3268a29afe",
@@ -17,5 +21,10 @@
     "license": "CC BY-NC 4.0",
     "homepage": "https://how2sign.github.io/"
   },
-  "retrieved": "2026-11-09"
+  "retrieved": "2026-11-09",
+  "extraction": {
+    "mediapipe": "1.2.0",
+    "opencv": "5.0.0",
+    "model": "https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task"
+  }
 }
