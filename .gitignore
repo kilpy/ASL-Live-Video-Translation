@@ -1,13 +1,24 @@
+# Python and tooling
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-data/
-models/
+
+# Data: hosted on Hugging Face, pinned in configs/config.yaml.
+# Only the manifest (hashes checked at runtime) is committed.
+data/*
+!data/manifest.json
+
+# Models, checkpoints, MediaPipe weights
+/models/
 *.pt
 *.onnx
+*.task
+
+# Generated images that contain signers' faces
+reports/samples/
+
+# Secrets and local settings
 .env
 .claude/settings.local.json
-runs/
-reports/samples/

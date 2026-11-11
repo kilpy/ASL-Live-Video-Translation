@@ -47,15 +47,23 @@ def to_array(result) -> np.ndarray:
     return frame
 
 
-def read_frames(path: Path, fps: int) -> Iterator[tuple[int, np.ndarray]]:
-    """Yield (timestamp_ms, BGR frame), dropping frames to approximate `fps`."""
+def read_frames(path: Path, fps: int, start: float | None = None,
+                end: float | None = None) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield (timestamp_ms, BGR frame) between `start` and `end` seconds at about `fps`.
+
+    Timestamps are from the start of the video, so they rise across a whole recording.
+    """
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise ValueError(f"Could not open {path}")
     source_fps = cap.get(cv2.CAP_PROP_FPS)
-    index, next_index = 0, 0.0
+    index = round(start * source_fps) if start else 0
+    last = end * source_fps if end is not None else float("inf")
+    if index:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+    next_index = float(index)
     try:
-        while True:
+        while index <= last:
             ok, frame = cap.read()
             if not ok:
                 return

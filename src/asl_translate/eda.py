@@ -3,7 +3,6 @@
 Works on whichever splits are downloaded; cross-split checks need at least two.
 """
 import json
-import re
 from collections import Counter
 from itertools import combinations
 from pathlib import Path
@@ -12,27 +11,16 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from asl_translate.config import REPO_ROOT, load_config
+from asl_translate.dataset import annotation_path, load_annotations, tokenize  # noqa: F401
 
 REPORT_DIR = REPO_ROOT / "reports" / "eda"
 VOCAB_SIZES = [500, 1000, 2000, 5000, 10000]  # 1000 is the Experiment Card's target
 INK, MUTED, MARK = "#1f1f1f", "#6b6b6b", "#2a78b5"
 
 
-def tokenize(sentence: str) -> list[str]:
-    return re.findall(r"[a-z0-9']+", sentence.lower())
-
-
 def load_splits(data: dict) -> dict[str, pd.DataFrame]:
-    frames = {}
-    for split in data["splits"]:
-        path = data["root"] / data["sources"]["annotations"][split]["file"]
-        if path.exists():
-            # QUOTE_NONE: sentences contain literal quotes, and the files are tab-separated
-            df = pd.read_csv(path, sep="\t", quoting=3, keep_default_na=False)
-            df["DURATION"] = df["END_REALIGNED"] - df["START_REALIGNED"]
-            df["TOKENS"] = df["SENTENCE"].map(tokenize)
-            frames[split] = df
-    return frames
+    present = [s for s in data["splits"] if annotation_path(data, s).exists()]
+    return {s: load_annotations(data, s) for s in present}
 
 
 def percentiles(values: pd.Series) -> dict[str, float]:
@@ -141,7 +129,7 @@ def main() -> None:
     data = load_config()["data"]
     frames = load_splits(data)
     if not frames:
-        raise SystemExit("No annotations found; run `python -m asl_translate.download annotations`")
+        raise SystemExit("No annotations found; run `python -m asl_translate.dataset annotations`")
     summary = summarize(frames, data["fps"])
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
