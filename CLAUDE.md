@@ -8,9 +8,9 @@ Real-time ASL-to-text translation from webcam video (CS6170 capstone).
 - `uv run ruff check .` lints
 - `uv run python -m asl_translate.capture` webcam smoke test
 
-- `uv run python -m asl_translate.download <annotations|clips> [--split val]` fetches How2Sign
+- `uv run python -m asl_translate.dataset annotations` fetches How2Sign annotations
 - `uv run python -m asl_translate.eda` writes `reports/eda/`
-- `uv run python -m asl_translate.samples` shows val clips and their MediaPipe landmarks in `reports/samples/` (git-ignored: signers' faces)
+- `uv run python -m asl_translate.samples` shows aligned validation excerpts and their MediaPipe landmarks in `reports/samples/` (git-ignored: signers' faces)
 
 ## Layout
 - `src/asl_translate/` package code

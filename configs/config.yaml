@@ -25,7 +25,7 @@ data:
   # Revision is the commit printed by upload.py; update it whenever the data changes.
   processed_hub:
     repo: ASL-Live-Video-Translation/how2sign-realigned-mediapipe
-    revision: 3d6f77bc57cd89498c509866fab45749447dc81e
+    revision: 598622fc802aae9dbfdf990b5b287aa7d99fd241
 
   # Subset selection (dataset.py). Vocabulary comes from train only.
   vocab_size: 1000

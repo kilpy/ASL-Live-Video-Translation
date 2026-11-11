@@ -13,7 +13,9 @@ Extraction is resumable: finished sentences are skipped. The test split is only 
 asked for explicitly, for the one final evaluation.
 """
 import argparse
+import os
 import shutil
+import tempfile
 import time
 import traceback
 import zipfile
@@ -68,9 +70,11 @@ def reduce(holistic: np.ndarray, features: dict) -> dict[str, np.ndarray]:
 # ---------------------------------------------------------------- extraction
 
 
-def paths_for(data: dict, split: str, name: str) -> tuple[Path, Path]:
-    return (data["interim"] / "holistic" / split / f"{name}.npz",
-            data["processed"] / "landmarks" / split / f"{name}.npz")
+def paths_for(data: dict, split: str, name: str, source: str = "mediapipe") -> tuple[Path, Path]:
+    from asl_translate.pose_sources import folder
+
+    return (data["interim"] / ("holistic" if source == "mediapipe" else source) / split / f"{name}.npz",
+            data["processed"] / folder(source) / split / f"{name}.npz")
 
 
 def open_shard(data: dict, shard: str):
@@ -84,34 +88,55 @@ def open_shard(data: dict, shard: str):
 
 
 def process_video(data: dict, split: str, video: str, shard: str, member: str,
-                  sentences: list[tuple[str, float, float]]) -> tuple[str, int, float, str]:
+                  sentences: list[tuple[str, float, float]], source: str = "mediapipe") -> tuple[str, int, float, str]:
     """Copy one full video out of its shard, extract every sentence in it, delete the copy."""
     from asl_translate.landmarks import extract, read_frames
 
     started, frames = time.time(), 0
-    tmp = data["interim"] / "videos" / f"{video}.mp4"
+    tmp = None
     try:
-        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp_dir = data["interim"] / "videos"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=f"{video}-", suffix=".mp4", dir=tmp_dir,
+                                         delete=False) as temporary:
+            tmp = Path(temporary.name)
         with open_shard(data, shard) as f, zipfile.ZipFile(f).open(member) as src:
             with open(tmp, "wb") as dst:
                 shutil.copyfileobj(src, dst, length=1 << 22)
         for name, start, end in sentences:
-            holistic_path, model_path = paths_for(data, split, name)
-            holistic = extract(read_frames(tmp, data["fps"], start=start, end=end))
+            holistic_path, model_path = paths_for(data, split, name, source)
+            sampled = read_frames(tmp, data["fps"], start=start, end=end)
+            if source == "mediapipe":
+                holistic = extract(sampled)
+            else:
+                from asl_translate.pose_sources import extract as extract_pose
+                holistic = extract_pose(source, sampled, data["interim"] / "frames")
             if len(holistic) == 0:  # segment shorter than one frame, or past the video's end
                 print(f"skipped {name}: no frames between {start:.2f}s and {end:.2f}s",
                       flush=True)
                 continue
-            holistic_path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
+            if source == "mediapipe":
+                holistic_path.parent.mkdir(parents=True, exist_ok=True)
+                np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
+                result = reduce(holistic, data["features"])
+            else:
+                from asl_translate.pose_sources import prepare
+                result = prepare(holistic)
             model_path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(model_path, **reduce(holistic, data["features"]))
+            partial = model_path.with_suffix(".partial")
+            try:
+                with partial.open("wb") as out:
+                    np.savez_compressed(out, **result)
+                os.replace(partial, model_path)
+            finally:
+                partial.unlink(missing_ok=True)
             frames += len(holistic)
         return video, frames, time.time() - started, ""
     except Exception:
         return video, frames, time.time() - started, traceback.format_exc()
     finally:
-        tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
 
 
 def read_split(data: dict, split: str) -> list[str]:
@@ -129,20 +154,21 @@ def extraction_info() -> dict:
     return {"mediapipe": mediapipe.__version__, "opencv": cv2.__version__, "model": MODEL_URL}
 
 
-def extract_splits(data: dict, splits: list[str], limit: int | None, workers: int) -> None:
+def extract_splits(data: dict, splits: list[str], limit: int | None, workers: int,
+                   offset: int = 0, source: str = "mediapipe") -> bool:
     index = load_video_index(data)
     jobs = []
     for split in splits:
         verify([annotation_path(data, split)])
         df = load_annotations(data, split).set_index("SENTENCE_NAME")
-        names = read_split(data, split)[:limit]
-        todo = [n for n in names if not paths_for(data, split, n)[1].exists()]
+        names = read_split(data, split)[offset:offset + limit if limit is not None else None]
+        todo = [n for n in names if not paths_for(data, split, n, source)[1].exists()]
         print(f"{split}: {len(names) - len(todo)} of {len(names)} sentences already done")
         rows = df.loc[todo]
         for video, group in rows.groupby("VIDEO_NAME"):
             shard, member = index[split][video]
             sentences = list(zip(group.index, group["START_REALIGNED"], group["END_REALIGNED"]))
-            jobs.append((data, split, video, shard, member, sentences))
+            jobs.append((data, split, video, shard, member, sentences, source))
 
     total_frames, failures, started = 0, [], time.time()
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -161,36 +187,45 @@ def extract_splits(data: dict, splits: list[str], limit: int | None, workers: in
         print(f"{len(failures)} videos failed; details in {log}. Rerun to retry them.")
     else:
         print(f"Done: {total_frames} frames in {(time.time() - started) / 60:.1f} min")
+    return not failures
 
 
 # ---------------------------------------------------------------- smoke subset
 
 
-def build_smoke(data: dict) -> None:
+def build_smoke(data: dict, source: str = "mediapipe") -> None:
     """Copy the smoke sentences' model inputs into data/processed/smoke/ and hash both folders."""
+    from asl_translate.pose_sources import folder
     dirs = []
     for split in ("train", "val"):
         names = read_split(data, f"smoke_{split}")
-        out = data["processed"] / "smoke" / split
-        if out.exists():
-            shutil.rmtree(out)
-        out.mkdir(parents=True)
-        missing = [n for n in names if not paths_for(data, split, n)[1].exists()]
+        out = data["processed"] / folder(source, smoke=True) / split
+        missing = [n for n in names if not paths_for(data, split, n, source)[1].exists()]
         if missing:
             raise SystemExit(f"{len(missing)} smoke_{split} sentences not extracted yet, "
                              f"e.g. {missing[:3]}; run `features extract --splits {split}` first")
+        if out.exists():
+            unexpected = {p.name for p in out.iterdir()} - {f"{name}.npz" for name in names}
+            if unexpected:
+                raise SystemExit(f"Unexpected files in {out}; move them before building smoke data")
+        out.mkdir(parents=True, exist_ok=True)
         for name in names:
-            shutil.copy2(paths_for(data, split, name)[1], out / f"{name}.npz")
+            shutil.copy2(paths_for(data, split, name, source)[1], out / f"{name}.npz")
         dirs.append(out)
         size = sum(p.stat().st_size for p in out.iterdir()) / 1e6
         print(f"smoke/{split}: {len(names)} sentences, {size:.1f} MB")
-    record(dirs, {"extraction": extraction_info()})
+    if source != "mediapipe":
+        dirs.append(data["processed"] / folder(source) / "metadata.json")
+    record(dirs, {"extraction": extraction_info()} if source == "mediapipe" else None)
 
 
-def record_landmarks(data: dict, splits: list[str]) -> None:
-    dirs = [data["processed"] / "landmarks" / s for s in splits
-            if (data["processed"] / "landmarks" / s).exists()]
-    record(dirs, {"extraction": extraction_info()})
+def record_landmarks(data: dict, splits: list[str], source: str = "mediapipe") -> None:
+    from asl_translate.pose_sources import folder
+    dirs = [data["processed"] / folder(source) / s for s in splits
+            if (data["processed"] / folder(source) / s).exists()]
+    if source != "mediapipe":
+        dirs.append(data["processed"] / folder(source) / "metadata.json")
+    record(dirs, {"extraction": extraction_info()} if source == "mediapipe" else None)
 
 
 def main() -> None:
@@ -199,16 +234,26 @@ def main() -> None:
     parser.add_argument("step", choices=["extract", "smoke"])
     parser.add_argument("--splits", nargs="+", default=["train", "val"],
                         choices=["train", "val", "test"])
-    parser.add_argument("--limit", type=int, default=None, help="first N sentences per split")
+    parser.add_argument("--limit", type=int, default=None, help="process up to N sentences per split")
+    parser.add_argument("--offset", type=int, default=0, help="skip N sentences per split")
     parser.add_argument("--workers", type=int, default=1)
+    from asl_translate.pose_sources import SOURCES
+    parser.add_argument("--source", choices=SOURCES, default="mediapipe")
     args = parser.parse_args()
+    if args.offset < 0 or (args.limit is not None and args.limit <= 0):
+        parser.error("--offset must be non-negative and --limit must be positive")
     data = load_config()["data"]
     if args.step == "extract":
-        extract_splits(data, args.splits, args.limit, args.workers)
-        if args.limit is None:
-            record_landmarks(data, args.splits)
+        if args.source != "mediapipe":
+            from asl_translate.pose_sources import check_metadata
+            check_metadata(data, args.source)
+        succeeded = extract_splits(data, args.splits, args.limit, args.workers, args.offset, args.source)
+        if not succeeded:
+            raise SystemExit("Extraction failed for one or more videos; rerun to retry")
+        if args.limit is None and args.offset == 0:
+            record_landmarks(data, args.splits, args.source)
     else:
-        build_smoke(data)
+        build_smoke(data, args.source)
 
 
 if __name__ == "__main__":

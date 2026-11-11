@@ -18,6 +18,17 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest", "ruff"]
+vitpose = [
+    "easy-vitpose",
+    "einops==0.8.2",
+    "ffmpeg-python==0.2.0",
+    "filterpy==1.4.5",
+    "scikit-image==0.26.0",
+    "timm==1.0.15",
+    "ultralytics==8.3.107",
+]
+rtm = ["rtmlib==0.0.16", "onnxruntime==1.31.1"]
+parquet = ["datasets==5.2.0", "pyarrow==26.0.1"]
 
 [build-system]
 requires = ["hatchling"]
@@ -32,3 +43,6 @@ src = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+easy-vitpose = { git = "https://github.com/JunkyByte/easy_ViTPose.git", rev = "bb9860359e55b099a507c8000e360d48a27cc36d" }

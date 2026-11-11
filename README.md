@@ -76,6 +76,16 @@ uv run python -m asl_translate.features smoke           # smoke subset
 uv run python -m asl_translate.upload                   # publish; prints the revision to pin
 ```
 
+Extraction can be interrupted and resumed: completed sentence files are skipped. To work through
+bounded batches, use `--splits train --offset 0 --limit 100`, then increase `--offset` by 100 for
+each batch. After all batches, run `extract --splits train` once without either option to retry any
+missing sentences and record the completed split hash. Set `ASL_DATA_ROOT` to move the raw,
+interim, and processed data directories; the committed manifest remains in this repository.
+
+To inspect validation examples, run `uv run python -m asl_translate.samples` after the annotations
+and video index are available. It reads up to four full validation videos from their shards, cuts
+the aligned sentence ranges, and writes visualizations to `reports/samples/`.
+
 Processed data is public at
 [`ASL-Live-Video-Translation/how2sign-realigned-mediapipe`](https://huggingface.co/datasets/ASL-Live-Video-Translation/how2sign-realigned-mediapipe).
 
@@ -87,6 +97,115 @@ covered sentence. Test is never read by `train.py`; it is used once, at the end.
 **Features.** MediaPipe Holistic at 15 fps (matching SHuBERT): 7 upper-body points and both hands,
 x and y, with missing frames interpolated, plus per-frame detection flags. Each frame is centered on
 the shoulders and scaled by shoulder width.
+
+### Additional pose sources
+
+The extractor supports `--source mediapipe` (default), `openpose`, `vitpose`, `rtmw`, or `dwpose`. All use the same
+sentence IDs, re-aligned timestamps, 15 fps sampling, splits, and interpolation. OpenPose stores
+BODY_25 followed by 21 points per hand (67 total). ViTPose stores COCO-WholeBody's 23 body/foot
+points followed by 21 points per hand (65 total); its 68 detailed face points are omitted. RTMW
+and DWPose use the same 65-point COCO-WholeBody layout. The additional sources
+store normalized x/y, per-point `confidence`, and per-point `detected` flags in each NPZ. The
+existing MediaPipe files remain at `landmarks/{split}`; new files go in
+`landmarks/{source}/{split}`. Native body keypoints can include eyes and ears.
+
+RTMW and DWPose use YOLOX-tiny for CPU person detection and Core ML for pose inference on macOS;
+some pose operations may also run on CPU. Install the optional runtime with
+`uv sync --group rtm` (include `--group vitpose` to keep that optional runtime installed too).
+Put the ONNX files named `yolox-tiny.onnx`, `rtmw.onnx`, and `dwpose.onnx` in `models/`, or
+set `ASL_RTM_MODEL_DIR` to their directory. The checkpoints are the `end2end.onnx` files in the
+official [YOLOX-tiny](https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_tiny_8xb8-300e_humanart-6f3252f9.zip),
+[RTMW lightweight](https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/rtmw-dw-l-m_simcc-cocktail14_270e-256x192_20231122.zip), and
+[DWPose small](https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-s_simcc-ucoco_dw-ucoco_270e-256x192-3fd922c8_20230728.zip) archives.
+For example, run `uv run --group rtm python -m asl_translate.features extract --source rtmw --splits val --limit 1`.
+
+Before extracting ViTPose, install the optional pinned runtime and fetch the two checkpoints:
+
+```bash
+uv sync --group vitpose
+mkdir -p models
+curl -fL -o models/vitpose-s-wholebody.pth https://huggingface.co/JunkyByte/easy_ViTPose/resolve/e83805274e89428969355ec4afffcbc413e79188/torch/wholebody/vitpose-s-wholebody.pth
+curl -fL -o models/yolov8n.pt https://huggingface.co/JunkyByte/easy_ViTPose/resolve/e83805274e89428969355ec4afffcbc413e79188/yolov8/yolov8n.pt
+export ASL_VITPOSE_MODEL="$PWD/models/vitpose-s-wholebody.pth"
+export ASL_VITPOSE_DETECTOR="$PWD/models/yolov8n.pt"
+uv run --group vitpose python -m asl_translate.features extract --source vitpose --splits val --limit 1
+```
+
+ViTPose automatically selects MPS when available; `ASL_VITPOSE_DEVICE=cpu` overrides it. The
+YOLO person detector runs before ViTPose. OpenPose needs a separately built official executable
+and its BODY_25 and hand models; set `ASL_OPENPOSE_BIN` to the executable and
+`ASL_OPENPOSE_MODELS` to its model directory. Its hand detector runs after body detection. Consult
+the [OpenPose installation instructions](https://github.com/CMU-Perceptual-Computing-Lab/openpose/blob/master/doc/installation/0_index.md)
+and its non-commercial research license. A CPU-only Apple Silicon build was checked on this Mac;
+the Toshiba installation uses the [Apple Silicon OpenPose/Caffe fork](https://github.com/franzcrs/openpose-with-caffe-for-MacM1/tree/16ca125687a08d2aa31449aa2945e92f144848d4)
+at commit `16ca125687a08d2aa31449aa2945e92f144848d4`. Configure it with:
+
+```bash
+export ASL_OPENPOSE_BIN=/Volumes/Toshiba/temp/asl-openpose-runtime/build/examples/openpose/openpose.bin
+export ASL_OPENPOSE_MODELS=/Volumes/Toshiba/temp/asl-openpose-runtime/source/models
+uv run python -m asl_translate.features extract --source openpose --splits val --limit 1
+```
+
+The drive must be mounted at the same path for this build's linked libraries to work.
+
+For a full run, remove `--limit 1`; the default splits are train and val, and test is opt-in with
+`--splits test`. Start with one worker on an 18 GB Mac. Each new source records model checksums and
+runtime details in `landmarks/{source}/metadata.json`; a resume refuses changed settings. To keep
+the raw videos and intermediate files on an external drive, set `ASL_DATA_ROOT` before initializing
+the dataset. Existing annotations, split files, and the video index must be available under that data
+root or rebuilt with `python -m asl_translate.dataset`.
+
+After a full source extraction, `features smoke --source vitpose` creates the smoke subset, and
+`upload --source vitpose --smoke` publishes that source when you choose to run it. The equivalent
+OpenPose commands use `--source openpose`. Once the dataset revision in `configs/config.yaml` and
+`data/manifest.json` include the new files, downstream users can run:
+
+```bash
+uv run python -m asl_translate.download_features --source vitpose --splits train val
+uv run python -m asl_translate.download_features --source rtmw --splits train val test
+uv run python -m asl_translate.download_features --source dwpose --splits test
+uv run python -m asl_translate.models.train --source vitpose
+```
+
+Choose `mediapipe`, `vitpose`, `rtmw`, or `dwpose` with `--source`, and one or more
+partitions with `--splits`. The downloader fetches only the selected source and partitions,
+along with their split lists and source metadata. The dataset split lists include 10 train and
+one validation IDs whose annotated ranges are beyond the available videos; their feature files
+are absent for every source.
+
+The same features are also published as Parquet configurations usable directly with Hugging Face
+Datasets (`uv sync --group parquet`):
+
+```python
+from datasets import load_dataset
+
+dataset = load_dataset(
+    "ASL-Live-Video-Translation/how2sign-realigned-mediapipe",
+    "rtmw",  # or "mediapipe", "vitpose", or "dwpose"
+)
+
+train = dataset["train"]
+validation = dataset["validation"]
+test = dataset["test"]
+```
+
+Choose `mediapipe`, `vitpose`, `rtmw`, or `dwpose` as the configuration. MediaPipe has no
+published test split. To load just one split, pass `split="train"`, `split="validation"`, or
+`split="test"` to `load_dataset`. Rows preserve NPZ `points` and `detected` arrays and include `sentence_id`;
+the other three sources also have `confidence`. The rows do not contain translation text.
+To regenerate the Parquet files from a local MediaPipe dataset checkout and the other sources'
+processed landmarks, run:
+
+```bash
+uv run --group parquet python -m asl_translate.export_parquet \
+  --mediapipe-root /path/to/dataset/landmarks \
+  --other-root /path/to/data/processed/landmarks \
+  --output /path/to/dataset/parquet
+```
+
+The model derives its input width from the selected features and uses source-specific shoulder
+indices. Train a separate model per source: existing MediaPipe checkpoints cannot be reused for
+different point layouts. Check the pinned dataset revision for availability of additional sources.
 
 ## Leakage risks
 
