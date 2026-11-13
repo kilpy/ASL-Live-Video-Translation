@@ -6,6 +6,7 @@ flags = 101), D d_model (256), H GRU hidden per direction (128), V vocabulary in
 import torch
 from torch import nn
 import torch.nn.functional as F
+import random
 
 class PoseGRUEncoder(nn.Module):
     """Per-frame features -> bidirectional GRU -> one d_model vector per frame."""
@@ -60,7 +61,7 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     """GRU decoder with dot-product (Luong) attention; generates one token per call."""
 
-    def __init__(self, vocab_size, hidden_dim, emb_dim=256, num_layers=1, dropout=0.1, pad_idx=0):
+    def __init__(self, vocab_size, hidden_dim, emb_dim=256,num_layers=1, dropout=0.1, pad_idx=0):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=pad_idx)
         self.rnn = nn.RNN(
