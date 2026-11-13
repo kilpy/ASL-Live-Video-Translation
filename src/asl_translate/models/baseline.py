@@ -90,17 +90,14 @@ class Decoder(nn.Module):
 
 class Seq2Seq(nn.Module):
     """Builds and owns its Encoder and Decoder so their hidden_dim and num_layers always match."""
-    #TODO: CHANGE THIS, ARGS MUST BE CLEANED (It should work though, but I have not tried, so no gaurentee)
-    def __init__(self, src_vocab_size, tgt_vocab_size, emb_dim, hidden_dim,
-                 sos_idx, eos_idx, num_layers=1, dropout=0.1, pad_idx=0):
-        # src_vocab_size is the # of words in ASL and tgt_vocab size is he # of words in english
+
+    def __init__(self, in_dim: int, vocab_size: int, encoder: dict, decoder: dict, pad_id: int):
+        # in_dim: features per pose frame (101); vocab_size: # of English tokens
+        # encoder / decoder: keyword arguments for each class (emb_dim, hidden_dim, num_layers, dropout, ...)
         super().__init__()
-        self.encoder = Encoder(src_vocab_size, emb_dim, hidden_dim, num_layers, dropout, pad_idx)
-        self.decoder = Decoder(tgt_vocab_size, emb_dim, hidden_dim, num_layers, dropout, pad_idx)
-        # Start, end, and padding for vector
-        self.sos_idx = sos_idx
-        self.eos_idx = eos_idx
-        self.pad_idx = pad_idx
+        self.encoder = Encoder(in_dim, **encoder)
+        self.decoder = Decoder(vocab_size, pad_idx=pad_id, **decoder)
+        self.pad_id = pad_id
 
     def forward(self, src, tgt, src_lengths, teacher_forcing_ratio=0.5):
         # src: (batch, src_len, features), tgt: (batch, tgt_len) beginning with <sos>

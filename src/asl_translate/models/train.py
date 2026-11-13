@@ -151,8 +151,7 @@ def main() -> None:
                              generator=generator, collate_fn=lambda b: collate(b, words[PAD]))
                for s in ("train", "val")}
     in_dim = splits["train"][0][0].shape[1]
-    model = Seq2Seq(in_dim, len(itos), cfg["encoder"], cfg["decoder"], train_cfg["max_tokens"],
-                    words[PAD]).to(device)
+    model = Seq2Seq(in_dim, len(itos), cfg["encoder"], cfg["decoder"], words[PAD]).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
                                   weight_decay=train_cfg["weight_decay"])
     loss_fn = nn.CrossEntropyLoss(ignore_index=words[PAD],
