@@ -227,8 +227,10 @@ different point layouts. Check the pinned dataset revision for availability of a
 
 ## Progress on the other approaches
 
-- **CLASSICAL** (pose GRU + RNN decoder): shares this data and training loop; needs an RNN decoder
-  module plugged in through `configs/config.yaml`.
+- **CLASSICAL** (pose GRU + GRU decoder with dot-product attention, `models/classical.py`): shares
+  this data, encoder and training loop; run with `--approach CLASSICAL`. Not yet trained in full.
+- **Encoder padding.** The shared pose GRU encoder now skips padded frames (before, its backward
+  direction ran through the batch padding). BASELINE results above predate this and need a rerun.
 - **DEEP** (DINOv2 + SHuBERT + ByT5): full landmarks, including face, are kept in `data/interim/` for
   the SHuBERT-style hand and face crops; feature extraction and fine-tuning are not started.
 

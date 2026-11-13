@@ -13,11 +13,11 @@ Real-time ASL-to-text translation from webcam video (CS6170 capstone).
 - `uv run python -m asl_translate.samples` shows aligned validation excerpts and their MediaPipe landmarks in `reports/samples/` (git-ignored: signers' faces)
 
 ## Layout
-- `src/asl_translate/` package code
+- `src/asl_translate/` package code; `models/baseline.py` (BASELINE, and the shared pose GRU encoder), `models/classical.py` (CLASSICAL), `models/train.py`
 - `configs/config.yaml` shared `data` block, pluggable `encoders`/`decoders`, and the CLASSICAL, BASELINE and DEEP approaches that pair them
 - `tests/` pytest tests
 - `data/`, `models/`, `runs/` git-ignored datasets, weights and experiment outputs
-- `Submissions Context/` course submissions; the Experiment Card in `Architecture_Seminar.pdf` is the spec
+- `deliverables/` course submissions; the Experiment Card in `Architecture_Seminar.pdf` is the spec
 
 ## Notes
 - The HMM fallback in the Experiment Card is dropped. The three architectures are CLASSICAL (RNN decoder), BASELINE (transformer decoder) and DEEP.

@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader
 from asl_translate.config import CONFIG_PATH, REPO_ROOT, get_device, load_config, set_seed
 from asl_translate.dataset import (annotation_path, download_annotations, load_annotations,
                                       manifest_key, read_manifest, tokenize, verify)
-from asl_translate.models.baseline import Seq2Seq
+from asl_translate.models import baseline, classical
 from asl_translate.pose_sources import SHOULDERS, folder
 
 RESULTS = REPO_ROOT / "reports" / "results.jsonl"
@@ -91,7 +91,7 @@ def collate(batch, pad_id: int):
 # ---------------------------------------------------------------- train and evaluate
 
 
-def evaluate(model: Seq2Seq, loader: DataLoader, itos: list[str], words: dict[str, int],
+def evaluate(model: nn.Module, loader: DataLoader, itos: list[str], words: dict[str, int],
              device: torch.device, max_tokens: int) -> dict:
     model.eval()
     hypotheses, references, confidences = [], [], []
@@ -107,6 +107,17 @@ def evaluate(model: Seq2Seq, loader: DataLoader, itos: list[str], words: dict[st
     bleu = sacrebleu.corpus_bleu(hypotheses, [references])
     return {"bleu": round(bleu.score, 2), "mean_confidence": round(float(np.mean(confidences)), 4),
             "examples": list(zip(references[:3], hypotheses[:3]))}
+
+
+def build_model(cfg: dict, in_dim: int, vocab_size: int, max_tokens: int,
+                pad_id: int) -> nn.Module:
+    """Pick the model class from the approach's decoder. Both share forward() and generate()."""
+    encoder, decoder = cfg["encoder"], cfg["decoder"]
+    if decoder["name"] == "transformer":
+        return baseline.Seq2Seq(in_dim, vocab_size, encoder, decoder, max_tokens, pad_id)
+    if decoder["name"] == "rnn":
+        return classical.Seq2Seq(in_dim, vocab_size, encoder, decoder, pad_id)
+    raise SystemExit(f"No model for decoder {decoder['name']!r} yet (approach {cfg['name']}).")
 
 
 def git(*args: str) -> str:
@@ -151,7 +162,7 @@ def main() -> None:
                              generator=generator, collate_fn=lambda b: collate(b, words[PAD]))
                for s in ("train", "val")}
     in_dim = splits["train"][0][0].shape[1]
-    model = Seq2Seq(in_dim, len(itos), cfg["encoder"], cfg["decoder"], words[PAD]).to(device)
+    model = build_model(cfg, in_dim, len(itos), train_cfg["max_tokens"], words[PAD]).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg["lr"],
                                   weight_decay=train_cfg["weight_decay"])
     loss_fn = nn.CrossEntropyLoss(ignore_index=words[PAD],

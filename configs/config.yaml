@@ -76,8 +76,13 @@ encoders:
 decoders:
   rnn:
     cell: gru
-    attention: true
+    attention: true    # dot-product (Luong) over the encoder outputs
     pretrained: false
+    emb_dim: 256
+    hidden_dim: 256    # also the encoder's output size, so attention scores line up
+    layers: 1
+    dropout: 0.1
+    teacher_forcing: 0.5  # chance per step of feeding the true previous token while training
   transformer:
     pretrained: false
     d_model: 256
