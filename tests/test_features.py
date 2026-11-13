@@ -59,7 +59,7 @@ def test_chunk_does_not_record_incomplete_split(monkeypatch):
     monkeypatch.setattr(features, "extract_splits", lambda *args: calls.append(args) or True)
     monkeypatch.setattr(features, "record_landmarks", lambda *_: calls.append("record"))
     features.main()
-    assert calls == [({}, ["train", "val"], 5, 1, 10, "mediapipe")]
+    assert calls == [({}, ["train", "val"], 5, 1, 10, ["mediapipe"])]
 
 
 def test_native_pose_sources_keep_dimensions_and_fill_missing_values():
@@ -270,7 +270,7 @@ def test_extract_cli_uses_pose_estimator_option(monkeypatch):
     monkeypatch.setattr(features, "extract_splits", lambda *args: calls.append(args) or True)
     features.main()
     assert calls[0] == ({}, "rtmw")
-    assert calls[1][-1] == "rtmw"
+    assert calls[1][-1] == ["rtmw"]
 
 
 def test_process_video_uses_estimator_and_preserves_saved_layout(tmp_path, monkeypatch):
@@ -303,10 +303,54 @@ def test_process_video_uses_estimator_and_preserves_saved_layout(tmp_path, monke
     data = {"raw": raw, "interim": tmp_path / "interim", "processed": tmp_path / "processed",
             "fps": 15, "features": FEATURES}
     _, frames, _, error = features.process_video(
-        data, "val", "video", "shard.zip", "video.mp4", [("sentence", 0.0, 1.0)], "rtmw")
+        data, "val", "video", "shard.zip", "video.mp4", [("sentence", 0.0, 1.0)], ["rtmw"])
     assert not error
     assert frames == calls[0][0] == 15
     with np.load(tmp_path / "processed/landmarks/rtmw/val/sentence.npz") as result:
         assert result["points"].shape == (frames, 65, 2)
         assert result["detected"].shape == (frames, 65)
         assert result["confidence"].shape == (frames, 65)
+
+
+def test_multi_estimator_reuses_video_and_resumes_after_failure(tmp_path, monkeypatch):
+    import zipfile
+
+    from asl_translate import pose, video
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    with zipfile.ZipFile(raw / "shard.zip", "w") as archive:
+        archive.writestr("video.mp4", b"video")
+    data = {"raw": raw, "interim": tmp_path / "interim", "processed": tmp_path / "processed",
+            "fps": 15, "features": FEATURES}
+    calls = []
+    failing = {"dwpose"}
+
+    class Estimator:
+        def __init__(self, source):
+            self.source = source
+
+        def extract(self, frames, work_dir):
+            assert list(frames) == [(0, "frame")]
+            calls.append(self.source)
+            if self.source in failing:
+                raise RuntimeError("model unavailable")
+            return np.full((1, 65, 3), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(pose, "get_pose_estimator", Estimator)
+    monkeypatch.setattr(video, "read_frames", lambda *args, **kwargs: iter([(0, "frame")]))
+    real_open = features.open_shard
+    opens = []
+    monkeypatch.setattr(features, "open_shard", lambda *args: (opens.append(1), real_open(*args))[1])
+    args = (data, "train", "video", "shard.zip", "video.mp4", [("sentence", 0, 1)],
+            ["rtmw", "dwpose"])
+    _, _, _, error = features.process_video(*args)
+    assert "dwpose" in error and "model unavailable" in error
+    assert (tmp_path / "processed/landmarks/rtmw/train/sentence.npz").is_file()
+    assert len(opens) == 1
+    failing.clear()
+    _, _, _, error = features.process_video(*args)
+    assert not error
+    assert calls == ["rtmw", "dwpose", "dwpose"]
+    assert (tmp_path / "processed/landmarks/dwpose/train/sentence.npz").is_file()
+    assert len(opens) == 2

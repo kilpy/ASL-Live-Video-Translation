@@ -112,3 +112,24 @@ def test_upload_limits_files_to_selected_features(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="Missing"):
         manager.upload_features("rtmw", ["test"])
     assert len(calls) == 1
+
+
+def test_download_videos_selects_split_shards_at_pinned_revision(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    from asl_translate.data import DataManager
+
+    calls = []
+
+    class Api:
+        def list_repo_files(self, repo, **kwargs):
+            assert repo == "org/source" and kwargs["revision"] == "pinned"
+            return ["train/a.zip", "train/b.zip", "val/c.zip", "train/readme.txt"]
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: calls.append(kwargs))
+    data = {"raw": tmp_path, "source_hub": {"repo": "org/source", "revision": "pinned"},
+            "sources": {"videos": {"train": {"dir": "train"}, "val": {"dir": "val"}}}}
+    DataManager(data).download_videos(["train"])
+    assert [call["filename"] for call in calls] == ["train/a.zip", "train/b.zip"]
+    assert all(call["revision"] == "pinned" and call["local_dir"] == tmp_path for call in calls)

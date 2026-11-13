@@ -4,7 +4,7 @@ Test a few: uv run python -m asl_translate.features extract --splits val --limit
 Full run:   uv run python -m asl_translate.features extract --splits train val --workers 4
 Smoke data: uv run python -m asl_translate.features smoke
 
-Use --pose_estimator to choose MediaPipe, OpenPose, ViTPose, RTMW, or DWPose.
+Use --pose_estimator to choose one or more of MediaPipe, OpenPose, ViTPose, RTMW, or DWPose.
 Sentence timings come from the realigned annotations. Videos are read from local shards
 when available, or streamed from the pinned mirror. Completed sentences are skipped;
 --offset and --limit allow chunked processing. The test split must be requested explicitly.
@@ -64,7 +64,7 @@ def paths_for(data: dict, split: str, name: str, source: str = "mediapipe") -> t
 
 
 def process_video(data: dict, split: str, video: str, shard: str, member: str,
-                  sentences: list[tuple[str, float, float]], source: str = "mediapipe") -> tuple[str, int, float, str]:
+                  sentences: list[tuple[str, float, float]], sources: list[str]) -> tuple[str, int, float, str]:
     """Extract each requested sentence from one video and remove its temporary copy."""
     from asl_translate.pose import get_pose_estimator, prepare
     from asl_translate.video import read_frames
@@ -77,35 +77,44 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
         with tempfile.NamedTemporaryFile(prefix=f"{video}-", suffix=".mp4", dir=tmp_dir,
                                          delete=False) as temporary:
             tmp = Path(temporary.name)
-        with open_shard(data, shard) as f, zipfile.ZipFile(f).open(member) as src:
-            with open(tmp, "wb") as dst:
-                shutil.copyfileobj(src, dst, length=1 << 22)
-        estimator = get_pose_estimator(source)
-        for name, start, end in sentences:
-            holistic_path, model_path = paths_for(data, split, name, source)
-            sampled = read_frames(tmp, data["fps"], start=start, end=end)
-            holistic = estimator.extract(sampled, data["interim"] / "frames")
-            if len(holistic) == 0:  # segment shorter than one frame, or past the video's end
-                print(f"skipped {name}: no frames between {start:.2f}s and {end:.2f}s",
-                      flush=True)
+        with (open_shard(data, shard) as f, zipfile.ZipFile(f) as archive,
+              archive.open(member) as src, open(tmp, "wb") as dst):
+            shutil.copyfileobj(src, dst, length=1 << 22)
+        errors = []
+        for source in sources:
+            pending = [(name, start, end) for name, start, end in sentences
+                       if not paths_for(data, split, name, source)[1].exists()]
+            if not pending:
                 continue
-            if source == "mediapipe":
-                holistic_path.parent.mkdir(parents=True, exist_ok=True)
-                np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
-                result = reduce(holistic, data["features"])
-            else:
-                result = prepare(holistic)
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            partial = model_path.with_suffix(".partial")
             try:
-                with partial.open("wb") as out:
-                    np.savez_compressed(out, **result)
-                os.replace(partial, model_path)
-            finally:
-                partial.unlink(missing_ok=True)
-            frames += len(holistic)
-        return video, frames, time.time() - started, ""
-    except Exception:
+                estimator = get_pose_estimator(source)
+                for name, start, end in pending:
+                    holistic_path, model_path = paths_for(data, split, name, source)
+                    sampled = read_frames(tmp, data["fps"], start=start, end=end)
+                    holistic = estimator.extract(sampled, data["interim"] / "frames")
+                    if len(holistic) == 0:
+                        print(f"skipped {name}: no frames between {start:.2f}s and {end:.2f}s",
+                              flush=True)
+                        continue
+                    if source == "mediapipe":
+                        holistic_path.parent.mkdir(parents=True, exist_ok=True)
+                        np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
+                        result = reduce(holistic, data["features"])
+                    else:
+                        result = prepare(holistic)
+                    model_path.parent.mkdir(parents=True, exist_ok=True)
+                    partial = model_path.with_suffix(".partial")
+                    try:
+                        with partial.open("wb") as out:
+                            np.savez_compressed(out, **result)
+                        os.replace(partial, model_path)
+                    finally:
+                        partial.unlink(missing_ok=True)
+                    frames += len(holistic)
+            except Exception:  # noqa: BLE001 - continue with the remaining estimators
+                errors.append(f"{source}:\n{traceback.format_exc()}")
+        return video, frames, time.time() - started, "\n".join(errors)
+    except Exception:  # noqa: BLE001 - report video failures without stopping other jobs
         return video, frames, time.time() - started, traceback.format_exc()
     finally:
         if tmp is not None:
@@ -130,21 +139,23 @@ def extraction_info() -> dict:
 
 
 def extract_splits(data: dict, splits: list[str], limit: int | None, workers: int,
-                   offset: int = 0, source: str = "mediapipe") -> bool:
+                   offset: int = 0, sources: list[str] | None = None) -> bool:
     """Process pending sentences by video and return whether all video jobs succeeded."""
+    sources = sources or ["mediapipe"]
     index = DataManager(data).load_video_index()
     jobs = []
     for split in splits:
         verify([annotation_path(data, split)])
         df = load_annotations(data, split).set_index("SENTENCE_NAME")
         names = read_split(data, split)[offset:offset + limit if limit is not None else None]
-        todo = [n for n in names if not paths_for(data, split, n, source)[1].exists()]
+        todo = [n for n in names if any(not paths_for(data, split, n, source)[1].exists()
+                                       for source in sources)]
         print(f"{split}: {len(names) - len(todo)} of {len(names)} sentences already done")
         rows = df.loc[todo]
         for video, group in rows.groupby("VIDEO_NAME"):
             shard, member = index[split][video]
             sentences = list(zip(group.index, group["START_REALIGNED"], group["END_REALIGNED"]))
-            jobs.append((data, split, video, shard, member, sentences, source))
+            jobs.append((data, split, video, shard, member, sentences, sources))
 
     total_frames, failures, started = 0, [], time.time()
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -216,22 +227,26 @@ def main() -> None:
     parser.add_argument("--offset", type=int, default=0, help="skip N sentences per split")
     parser.add_argument("--workers", type=int, default=1)
     from asl_translate.pose import SOURCES
-    parser.add_argument("--pose_estimator", choices=SOURCES, default="mediapipe")
+    parser.add_argument("--pose_estimator", nargs="+", choices=SOURCES, default=["mediapipe"])
     args = parser.parse_args()
     if args.offset < 0 or (args.limit is not None and args.limit <= 0):
         parser.error("--offset must be non-negative and --limit must be positive")
     data = load_config()["data"]
+    sources = list(dict.fromkeys(args.pose_estimator))
     if args.step == "extract":
-        if args.pose_estimator != "mediapipe":
-            from asl_translate.pose import check_metadata
-            check_metadata(data, args.pose_estimator)
-        succeeded = extract_splits(data, args.splits, args.limit, args.workers, args.offset, args.pose_estimator)
+        from asl_translate.pose import check_metadata
+        for source in sources:
+            if source != "mediapipe":
+                check_metadata(data, source)
+        succeeded = extract_splits(data, args.splits, args.limit, args.workers, args.offset, sources)
         if not succeeded:
             raise SystemExit("Extraction failed for one or more videos; rerun to retry")
         if args.limit is None and args.offset == 0:
-            record_landmarks(data, args.splits, args.pose_estimator)
+            for source in sources:
+                record_landmarks(data, args.splits, source)
     else:
-        build_smoke(data, args.pose_estimator)
+        for source in sources:
+            build_smoke(data, source)
 
 
 if __name__ == "__main__":

@@ -64,11 +64,17 @@ train a separate model for each.
 To generate features, prepare the data and run extraction (the test split is opt-in):
 
 ```bash
+export ASL_DATA_ROOT=/path/to/data  # optional; may be on an external drive
 uv run python -m asl_translate.data
-uv run python -m asl_translate.features extract --pose_estimator mediapipe --splits train val
+uv run python -m asl_translate.data videos --splits train val test
+uv run python -m asl_translate.features extract --pose_estimator mediapipe vitpose rtmw dwpose --splits train val
 ```
 
-Use `--offset` and `--limit` for chunks; run again without them to record the completed split.
+The `videos` command caches the pinned source ZIPs under `raw/`; repeat it to resume downloads.
+Extraction uses each cached video for all selected estimators, running them sequentially and
+skipping features already saved for each. Without cached ZIPs, videos are streamed. The default
+split lists are still the filtered baseline subset. Use `--offset` and `--limit` for chunks;
+run again without them to record the completed split.
 For RTMW or DWPose, install `uv sync --group rtm` and place `yolox-tiny.onnx` and
 `rtmw.onnx` or `dwpose.onnx` in `models/` (or set `ASL_RTM_MODEL_DIR`). The model files are
 `end2end.onnx` in the official [detector](https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_tiny_8xb8-300e_humanart-6f3252f9.zip),

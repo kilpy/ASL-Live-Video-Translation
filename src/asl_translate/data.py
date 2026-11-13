@@ -252,6 +252,24 @@ class DataManager:
         total = sum(map(len, index.values()))
         print(f"Indexed {total} videos, e.g. {sample!r} -> {index['val'][sample]}")
 
+    def download_videos(self, splits: list[str]) -> None:
+        """Cache the selected video ZIP shards at the pinned source revision."""
+        from huggingface_hub import HfApi, hf_hub_download
+
+        hub = self.data["source_hub"]
+        files = HfApi().list_repo_files(hub["repo"], repo_type="dataset", revision=hub["revision"])
+        shards = []
+        for split in splits:
+            folder = self.data["sources"]["videos"][split]["dir"]
+            selected = sorted(f for f in files if f.startswith(f"{folder}/") and f.endswith(".zip"))
+            if not selected:
+                raise SystemExit(f"No shards under {folder}/ at revision {hub['revision']}")
+            shards.extend(selected)
+        for number, shard in enumerate(dict.fromkeys(shards), 1):
+            print(f"Caching shard {number}/{len(shards)}: {shard}", flush=True)
+            hf_hub_download(repo_id=hub["repo"], repo_type="dataset", revision=hub["revision"],
+                            filename=shard, local_dir=self.data["raw"])
+
     def load_video_index(self) -> dict[str, dict[str, list[str]]]:
         """Verify and load the video-to-shard index."""
         data = self.data
@@ -357,6 +375,9 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command")
     for name in ("annotations", "index", "splits"):
         commands.add_parser(name)
+    videos = commands.add_parser("videos", help="cache source video ZIP shards")
+    videos.add_argument("--splits", nargs="+", choices=("train", "val", "test"),
+                        default=["train", "val", "test"])
     for name in ("download", "upload"):
         command = commands.add_parser(name)
         command.add_argument("--pose_estimator", choices=SOURCES, default="mediapipe")
@@ -382,6 +403,8 @@ def main() -> None:
         manager.upload_features(args.pose_estimator, args.splits, args.smoke)
     elif args.command == "export-parquet":
         manager.export_parquet(args.mediapipe_root, args.other_root, args.output)
+    elif args.command == "videos":
+        manager.download_videos(args.splits)
 
 
 if __name__ == "__main__":
