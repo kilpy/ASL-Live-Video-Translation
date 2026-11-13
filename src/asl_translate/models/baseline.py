@@ -5,7 +5,7 @@ flags = 101), D d_model (256), H GRU hidden per direction (128), V vocabulary in
 """
 import torch
 from torch import nn
-
+import torch.nn.functional as F
 
 class PoseGRUEncoder(nn.Module):
     """Per-frame features -> bidirectional GRU -> one d_model vector per frame."""
@@ -91,12 +91,24 @@ class Decoder(nn.Module):
 class Seq2Seq(nn.Module):
     """Builds and owns its Encoder and Decoder so their hidden_dim and num_layers always match."""
 
-    def __init__(self, in_dim: int, vocab_size: int, encoder: dict, decoder: dict, pad_id: int):
+    def __init__(self, in_dim: int, vocab_size: int, encoder_dim: dict, decoder_dim: dict, pad_id: int):
+        """
+        Args:
+            in_dim: Number of features in each pose frame. Sets the input size
+                of the encoder's first linear layer.
+            vocab_size: Number of tokens in the English (target) vocabulary, including
+                special tokens such as <pad>, <sos> and <eos>. 
+            encoder_dim: Keyword arguments unpacked into Encoder. The keys must match the
+                parameter names in Encoder.__init__.
+            decoder_dim: Keyword arguments unpacked into Decoder. The keys must match the 
+                parameter names in Decoder.__init__. Its hidden_dim must equal the encoder's output size 
+            pad_id: Token ID used for padding in the target sequences. 
+        """
         # in_dim: features per pose frame (101); vocab_size: # of English tokens
         # encoder / decoder: keyword arguments for each class (emb_dim, hidden_dim, num_layers, dropout, ...)
         super().__init__()
-        self.encoder = Encoder(in_dim, **encoder)
-        self.decoder = Decoder(vocab_size, pad_idx=pad_id, **decoder)
+        self.encoder = Encoder(in_dim, **encoder_dim)
+        self.decoder = Decoder(vocab_size, pad_idx=pad_id, **decoder_dim)
         self.pad_id = pad_id
 
     def forward(self, src, tgt, src_lengths, teacher_forcing_ratio=0.5):
