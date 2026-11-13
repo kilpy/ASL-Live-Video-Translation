@@ -60,7 +60,7 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     """GRU decoder with dot-product (Luong) attention; generates one token per call."""
 
-    def __init__(self, vocab_size, emb_dim, hidden_dim, num_layers=1, dropout=0.1, pad_idx=0):
+    def __init__(self, vocab_size, hidden_dim, emb_dim=256, num_layers=1, dropout=0.1, pad_idx=0):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=pad_idx)
         self.rnn = nn.RNN(
@@ -108,7 +108,7 @@ class Seq2Seq(nn.Module):
         # encoder / decoder: keyword arguments for each class (emb_dim, hidden_dim, num_layers, dropout, ...)
         super().__init__()
         self.encoder = Encoder(in_dim, **encoder_dim)
-        self.decoder = Decoder(vocab_size, pad_idx=pad_id, **decoder_dim)
+        self.decoder = Decoder(vocab_size, **decoder_dim, pad_idx=pad_id)
         self.pad_id = pad_id
 
     def forward(self, src, tgt, src_lengths, teacher_forcing_ratio=0.5):
