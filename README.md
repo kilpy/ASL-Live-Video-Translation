@@ -50,6 +50,7 @@ the comparison table reports the spread across 3 seeds for this reason.
 |---|---|---|---|---|---|---|---|
 | BASELINE | Smoke | 50 | 10 | 0.00 | 0.09 | CPU | `011e59b` |
 | BASELINE | Full, seed 0 | 1,994 | 298 | 1.29 | 0.46 | CPU | `ad04be0` |
+| BASELINE | Full, seed 0, encoder skips padding | 1,994 | 298 | 0.67 | 0.45 | CPU | `359410b` |
 
 Every number traces to a line in `reports/results.jsonl` with its commit and data hash. The BASELINE
 produces fluent instructional English that is mostly unrelated to the signing: the decoder learns
@@ -230,7 +231,9 @@ different point layouts. Check the pinned dataset revision for availability of a
 - **CLASSICAL** (pose GRU + GRU decoder with dot-product attention, `models/classical.py`): shares
   this data, encoder and training loop; run with `--approach CLASSICAL`. Not yet trained in full.
 - **Encoder padding.** The shared pose GRU encoder now skips padded frames (before, its backward
-  direction ran through the batch padding). BASELINE results above predate this and need a rerun.
+  direction ran through the batch padding). BASELINE was rerun after this change (`359410b`, same
+  data): BLEU 1.29 to 0.67. Both are near zero, and an MPS repeat of the old code alone gave 0.63,
+  so seeds 1 and 2 are needed before reading anything into the difference.
 - **DEEP** (DINOv2 + SHuBERT + ByT5): full landmarks, including face, are kept in `data/interim/` for
   the SHuBERT-style hand and face crops; feature extraction and fine-tuning are not started.
 
