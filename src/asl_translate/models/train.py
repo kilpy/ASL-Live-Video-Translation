@@ -2,7 +2,7 @@
 
     uv run python -m asl_translate.models.train --approach BASELINE --smoke
 
---smoke trains on the small committed-to-Hugging-Face subset on CPU (under 5 minutes, no token).
+--smoke trains on a small published subset using the configured smoke settings.
 Without it, trains on every extracted train sentence and evaluates on val. The test split is
 never read here: it is used once, at the end of the project.
 """
@@ -22,10 +22,10 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from asl_translate.config import CONFIG_PATH, REPO_ROOT, get_device, load_config, set_seed
-from asl_translate.dataset import (annotation_path, download_annotations, load_annotations,
-                                      manifest_key, read_manifest, tokenize, verify)
+from asl_translate.data import (DataManager, annotation_path, load_annotations, manifest_key,
+                                read_manifest, tokenize, verify)
 from asl_translate.models.baseline import Seq2Seq
-from asl_translate.pose_sources import SHOULDERS, folder
+from asl_translate.pose import SHOULDERS, folder
 
 RESULTS = REPO_ROOT / "reports" / "results.jsonl"
 PAD, BOS, EOS, UNK = "<pad>", "<bos>", "<eos>", "<unk>"
@@ -37,16 +37,14 @@ PAD, BOS, EOS, UNK = "<pad>", "<bos>", "<eos>", "<unk>"
 def ensure_data(data: dict, smoke: bool, source: str = "mediapipe") -> list[Path]:
     """Fetch anything missing (annotations, splits, landmarks), then check every hash."""
     if not all(annotation_path(data, s).exists() for s in ("train", "val")):
-        download_annotations(data, update_manifest=False)
+        DataManager(data).download_annotations(update_manifest=False)
     processed = data["processed"]
     folders = [f"{folder(source, smoke)}/{split}" for split in ("train", "val")]
     needed = [processed / "splits" / "vocab.txt"] + [processed / f for f in folders]
     if source != "mediapipe":
         needed.append(processed / folder(source) / "metadata.json")
     if not all(p.exists() for p in needed):
-        from asl_translate.download_features import download
-
-        download(data, source, ["train", "val"], smoke=smoke)
+        DataManager(data).download_features(source, ["train", "val"], smoke=smoke)
     missing = [p for p in needed if not p.exists()]
     if missing:
         raise SystemExit(f"Missing feature data at pinned dataset revision: {missing}")
@@ -65,6 +63,7 @@ def normalize(points: np.ndarray, source: str = "mediapipe") -> np.ndarray:
 
 def load_split(folder: Path, sentences: dict[str, str], words: dict[str, int],
                max_frames: int, max_tokens: int, source: str = "mediapipe") -> list[tuple[np.ndarray, list[int], str]]:
+    """Load feature files, normalize points, and tokenize sentence references."""
     examples = []
     for path in sorted(folder.glob("*.npz"), key=lambda p: p.name):  # same order on every OS
         with np.load(path) as f:
@@ -79,6 +78,7 @@ def load_split(folder: Path, sentences: dict[str, str], words: dict[str, int],
 
 
 def collate(batch, pad_id: int):
+    """Pad feature and token sequences and construct a frame padding mask."""
     frames = [torch.from_numpy(f) for f, _, _ in batch]
     lengths = torch.tensor([len(f) for f in frames])
     padded = nn.utils.rnn.pad_sequence(frames, batch_first=True)
@@ -93,6 +93,7 @@ def collate(batch, pad_id: int):
 
 def evaluate(model: Seq2Seq, loader: DataLoader, itos: list[str], words: dict[str, int],
              device: torch.device, max_tokens: int) -> dict:
+    """Generate validation translations and calculate BLEU and mean confidence."""
     model.eval()
     hypotheses, references, confidences = [], [], []
     for frames, frame_pad, _, refs in loader:
@@ -110,18 +111,20 @@ def evaluate(model: Seq2Seq, loader: DataLoader, itos: list[str], words: dict[st
 
 
 def git(*args: str) -> str:
+    """Run a Git command in the repository and return its standard output."""
     return subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True,
                           text=True).stdout.strip()
 
 
 def main() -> None:
+    """Train the selected model and record validation results."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--approach", default="BASELINE")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seed", type=int, default=None, help="default: first seed in config")
     parser.add_argument("--device", default=None, help="override training.device: cpu, mps, cuda, or auto")
-    parser.add_argument("--source", choices=list(SHOULDERS), default="mediapipe")
+    parser.add_argument("--pose_estimator", choices=list(SHOULDERS), default="mediapipe")
     args = parser.parse_args()
 
     cfg = load_config(args.approach)
@@ -134,16 +137,16 @@ def main() -> None:
     # the results log itself is expected to change between runs, so it doesn't count as dirty
     dirty = bool(git("status", "--porcelain", "--", ".", ":!reports/results.jsonl"))
 
-    used = ensure_data(data, args.smoke, args.source)
+    used = ensure_data(data, args.smoke, args.pose_estimator)
     itos = [PAD, BOS, EOS, UNK] + (data["processed"] / "splits" / "vocab.txt").read_text().split()
     words = {w: i for i, w in enumerate(itos)}
     sentences = {}
     for split in ("train", "val"):
         df = load_annotations(data, split)
         sentences.update(zip(df["SENTENCE_NAME"], df["SENTENCE"]))
-    root = data["processed"] / folder(args.source, args.smoke)
+    root = data["processed"] / folder(args.pose_estimator, args.smoke)
     splits = {s: load_split(root / s, sentences, words, train_cfg["max_frames"],
-                            train_cfg["max_tokens"], args.source) for s in ("train", "val")}
+                            train_cfg["max_tokens"], args.pose_estimator) for s in ("train", "val")}
     print(f"train {len(splits['train'])} / val {len(splits['val'])} sentences on {device}")
 
     generator = torch.Generator().manual_seed(seed)
@@ -174,8 +177,8 @@ def main() -> None:
 
     metrics = evaluate(model, loaders["val"], itos, words, device, train_cfg["max_tokens"])
     run_dir = cfg["run_dir"] / ("smoke" if args.smoke else "full") / f"seed_{seed}"
-    if args.source != "mediapipe":
-        run_dir = cfg["run_dir"] / args.source / ("smoke" if args.smoke else "full") / f"seed_{seed}"
+    if args.pose_estimator != "mediapipe":
+        run_dir = cfg["run_dir"] / args.pose_estimator / ("smoke" if args.smoke else "full") / f"seed_{seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), run_dir / "model.pt")
 
@@ -184,7 +187,7 @@ def main() -> None:
     result = {
         "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "approach": args.approach,
-        "source": args.source,
+        "source": args.pose_estimator,
         "smoke": args.smoke,
         "seed": seed,
         "split": "val",

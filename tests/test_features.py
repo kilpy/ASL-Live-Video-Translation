@@ -6,8 +6,9 @@ import pytest
 from numpy.testing import assert_allclose
 
 from asl_translate import features
-from asl_translate.dataset import record, verify
-from asl_translate.features import LEFT_HAND, RIGHT_HAND, interpolate, reduce
+from asl_translate.data import record, verify
+from asl_translate.features import LEFT_HAND, RIGHT_HAND, reduce
+from asl_translate.pose import interpolate
 
 FEATURES = {"pose_points": [0, 11, 12, 13, 14, 15, 16], "interpolate_missing": True}
 
@@ -62,7 +63,7 @@ def test_chunk_does_not_record_incomplete_split(monkeypatch):
 
 
 def test_native_pose_sources_keep_dimensions_and_fill_missing_values():
-    from asl_translate.pose_sources import prepare
+    from asl_translate.pose import prepare
 
     for n in (65, 67):
         raw = np.ones((3, n, 3), dtype=np.float32)
@@ -78,7 +79,7 @@ def test_native_pose_sources_keep_dimensions_and_fill_missing_values():
 def test_openpose_adapter_keeps_body_and_both_hands(monkeypatch):
     from pathlib import Path
 
-    from asl_translate.pose_sources import openpose
+    from asl_translate.pose import OpenPoseEstimator
 
     def run(command, check):
         output = Path(command[command.index("--write_json") + 1])
@@ -90,10 +91,12 @@ def test_openpose_adapter_keeps_body_and_both_hands(monkeypatch):
         (output / "00000001_keypoints.json").write_text(json.dumps({"people": []}))
         assert check
 
-    monkeypatch.setattr("asl_translate.pose_sources.subprocess.run", run)
+    monkeypatch.setattr("asl_translate.pose.subprocess.run", run)
+    monkeypatch.setenv("ASL_OPENPOSE_BIN", "openpose")
+    monkeypatch.setenv("ASL_OPENPOSE_MODELS", "models")
     frames = [(0, np.zeros((8, 8, 3), dtype=np.uint8)),
               (1, np.zeros((8, 8, 3), dtype=np.uint8))]
-    raw = openpose(frames, "openpose", "models")
+    raw = OpenPoseEstimator().extract(frames)
     assert raw.shape == (2, 67, 3)
     assert_allclose(raw[0, 25], [0.3, 0.4, 0.8])
     assert_allclose(raw[0, 46], [0.5, 0.6, 0.7])
@@ -113,7 +116,7 @@ def test_source_normalization_uses_native_shoulder_indices():
 
 
 def test_resume_refuses_changed_extraction_metadata(tmp_path, monkeypatch):
-    from asl_translate import pose_sources
+    from asl_translate import pose as pose_sources
 
     data = {"processed": tmp_path}
     monkeypatch.setattr(pose_sources, "extraction_metadata", lambda *_: {"weights": "first"})
@@ -125,7 +128,7 @@ def test_resume_refuses_changed_extraction_metadata(tmp_path, monkeypatch):
 
 
 def test_vitpose_adapter_selects_person_and_converts_coordinates(monkeypatch):
-    from asl_translate import pose_sources
+    from asl_translate import pose as pose_sources
 
     class Estimator:
         def __init__(self):
@@ -138,15 +141,20 @@ def test_vitpose_adapter_selects_person_and_converts_coordinates(monkeypatch):
             person = np.tile([10.0, 20.0, 0.8], (133, 1))
             return {0: person * 0, 1: person}
 
-    monkeypatch.setattr(pose_sources, "_vit_model", lambda *_: Estimator())
+    monkeypatch.setenv("ASL_VITPOSE_MODEL", "pose.pth")
+    monkeypatch.setenv("ASL_VITPOSE_DETECTOR", "detector.pt")
+    monkeypatch.setenv("ASL_VITPOSE_DEVICE", "cpu")
+    monkeypatch.setattr(pose_sources.ViTPoseEstimator, "_model", staticmethod(lambda *_: Estimator()))
     frame = np.zeros((100, 200, 3), dtype=np.uint8)
-    out = pose_sources.vitpose([(0, frame)], "pose.pth", "detector.pt", "cpu")
+    out = pose_sources.ViTPoseEstimator().extract([(0, frame)])
     assert out.shape == (1, 65, 3)
     assert_allclose(out[0, 0], [0.1, 0.1, 0.8])
 
 
 def test_feature_download_uses_selected_source_and_split(tmp_path, monkeypatch):
-    from asl_translate import download_features
+    import huggingface_hub
+
+    from asl_translate import data as data_module
 
     calls = []
 
@@ -156,17 +164,16 @@ def test_feature_download_uses_selected_source_and_split(tmp_path, monkeypatch):
         path.parent.mkdir(parents=True)
         path.touch()
 
-    monkeypatch.setattr(download_features, "snapshot_download", snapshot)
-    monkeypatch.setattr(download_features, "verify", lambda paths: calls.append(paths))
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot)
+    monkeypatch.setattr(data_module, "verify", lambda paths: calls.append(paths))
     data = {"processed": tmp_path, "processed_hub": {"repo": "example/repo", "revision": "abc"}}
-    result = download_features.download(data, "openpose", ["test"])
+    result = data_module.DataManager(data).download_features("openpose", ["test"])
     assert result == [tmp_path / "landmarks/openpose/test"]
     assert "landmarks/openpose/test/*.npz" in calls[0]
     assert tmp_path / "landmarks/openpose/metadata.json" in calls[1]
 
 
 def test_training_reuses_feature_downloader_when_data_is_missing(tmp_path, monkeypatch):
-    from asl_translate import download_features
     from asl_translate.models import train
 
     calls = []
@@ -186,7 +193,7 @@ def test_training_reuses_feature_downloader_when_data_is_missing(tmp_path, monke
         (data["processed"] / "landmarks" / source).mkdir(parents=True)
         (data["processed"] / "landmarks" / source / "metadata.json").touch()
 
-    monkeypatch.setattr(download_features, "download", download)
+    monkeypatch.setattr(train.DataManager, "download_features", download)
     needed = train.ensure_data(data, smoke=True, source="rtmw")
     assert calls[0] == ("rtmw", ["train", "val"], True)
     assert len(needed) == 4
@@ -194,7 +201,7 @@ def test_training_reuses_feature_downloader_when_data_is_missing(tmp_path, monke
 
 
 def test_wholebody_adapter_selects_signer_and_handles_missing_frames(monkeypatch):
-    from asl_translate import rtm_pose
+    from asl_translate import pose as rtm_pose
 
     class Detector:
         def __init__(self):
@@ -208,23 +215,98 @@ def test_wholebody_adapter_selects_signer_and_handles_missing_frames(monkeypatch
         assert bboxes.tolist() == [[0, 0, 40, 20]]
         return np.full((1, 133, 2), [20, 10]), np.full((1, 133), 0.8)
 
-    monkeypatch.setattr(rtm_pose, "_model", lambda _: (Detector(), estimator))
+    monkeypatch.setattr(rtm_pose.RTMEstimator, "_model", staticmethod(lambda _: (Detector(), estimator)))
     frame = np.zeros((20, 40, 3), dtype=np.uint8)
-    result = rtm_pose.extract_wholebody("rtmw", [(0, frame), (1, frame)])
+    result = rtm_pose.RTMEstimator("rtmw").extract([(0, frame), (1, frame)])
     assert result.shape == (2, 65, 3)
     np.testing.assert_allclose(result[0], np.tile([0.5, 0.5, 0.8], (65, 1)))
     assert np.isnan(result[1]).all()
 
 
-def test_existing_vitpose_metadata_accepts_only_the_verified_code_migration():
-    from asl_translate.pose_compat import (
-        ADDED_RTM_SOURCES,
-        LEGACY_VITPOSE,
-        compatible_vitpose_metadata,
+def test_legacy_metadata_requires_new_data_root(tmp_path, monkeypatch):
+    from asl_translate import pose
+
+    root = tmp_path / "landmarks" / "rtmw"
+    root.mkdir(parents=True)
+    (root / "metadata.json").write_text(json.dumps({"source": "rtmw", "code_sha256": {"old": "hash"}}))
+    monkeypatch.setattr(pose, "extraction_metadata", lambda *_: {"source": "rtmw", "code_sha256": {"new": "hash"}})
+    with pytest.raises(ValueError, match="use a new data root"):
+        pose.check_metadata({"processed": tmp_path}, "rtmw")
+
+
+def test_pose_estimator_factory_dispatches_all_sources():
+    from asl_translate.pose import (
+        MediaPipeEstimator,
+        OpenPoseEstimator,
+        RTMEstimator,
+        ViTPoseEstimator,
+        get_pose_estimator,
     )
 
-    previous = {"source": "vitpose", "code_sha256": LEGACY_VITPOSE, "fps": 15}
-    current = {"source": "vitpose", "code_sha256": ADDED_RTM_SOURCES, "fps": 15}
-    assert compatible_vitpose_metadata(previous, current)
-    assert not compatible_vitpose_metadata(previous, {**current, "fps": 30})
-    assert not compatible_vitpose_metadata(previous, {**current, "code_sha256": {}})
+    for name, expected in (("mediapipe", MediaPipeEstimator), ("openpose", OpenPoseEstimator),
+                           ("vitpose", ViTPoseEstimator), ("rtmw", RTMEstimator),
+                           ("dwpose", RTMEstimator)):
+        assert isinstance(get_pose_estimator(name), expected)
+    with pytest.raises(ValueError, match="Unknown"):
+        get_pose_estimator("unknown")
+
+
+def test_estimators_require_model_configuration(monkeypatch):
+    from asl_translate import pose
+
+    monkeypatch.delenv("ASL_OPENPOSE_BIN", raising=False)
+    monkeypatch.delenv("ASL_VITPOSE_MODEL", raising=False)
+    with pytest.raises(RuntimeError, match="ASL_OPENPOSE_BIN"):
+        pose.OpenPoseEstimator().extract([])
+    with pytest.raises(RuntimeError, match="ASL_VITPOSE_MODEL"):
+        pose.ViTPoseEstimator().extract([])
+
+
+def test_extract_cli_uses_pose_estimator_option(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["features", "extract", "--pose_estimator", "rtmw", "--limit", "1"])
+    monkeypatch.setattr(features, "load_config", lambda: {"data": {}})
+    monkeypatch.setattr("asl_translate.pose.check_metadata", lambda *args: calls.append(args))
+    monkeypatch.setattr(features, "extract_splits", lambda *args: calls.append(args) or True)
+    features.main()
+    assert calls[0] == ({}, "rtmw")
+    assert calls[1][-1] == "rtmw"
+
+
+def test_process_video_uses_estimator_and_preserves_saved_layout(tmp_path, monkeypatch):
+    import zipfile
+
+    import cv2
+
+    from asl_translate import pose
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    video = tmp_path / "video.mp4"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 64))
+    assert writer.isOpened()
+    for _ in range(48):
+        writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+    writer.release()
+    with zipfile.ZipFile(raw / "shard.zip", "w") as archive:
+        archive.write(video, "video.mp4")
+
+    calls = []
+
+    class Estimator:
+        def extract(self, frames, work_dir):
+            frames = list(frames)
+            calls.append((len(frames), work_dir))
+            return np.full((len(frames), 65, 3), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(pose, "get_pose_estimator", lambda source: Estimator())
+    data = {"raw": raw, "interim": tmp_path / "interim", "processed": tmp_path / "processed",
+            "fps": 15, "features": FEATURES}
+    _, frames, _, error = features.process_video(
+        data, "val", "video", "shard.zip", "video.mp4", [("sentence", 0.0, 1.0)], "rtmw")
+    assert not error
+    assert frames == calls[0][0] == 15
+    with np.load(tmp_path / "processed/landmarks/rtmw/val/sentence.npz") as result:
+        assert result["points"].shape == (frames, 65, 2)
+        assert result["detected"].shape == (frames, 65)
+        assert result["confidence"].shape == (frames, 65)

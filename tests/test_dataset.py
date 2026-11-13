@@ -2,8 +2,15 @@ import pandas as pd
 import pytest
 
 from asl_translate.config import load_config
-from asl_translate.dataset import (build_vocab, covered, make_splits, pick_by_video, record,
-                                   tokenize, verify)
+from asl_translate.data import (
+    build_vocab,
+    covered,
+    make_splits,
+    pick_by_video,
+    record,
+    tokenize,
+    verify,
+)
 
 
 def frame(rows: list[tuple[str, str, str]]) -> pd.DataFrame:
@@ -76,3 +83,32 @@ def test_manifest_detects_changed_data(tmp_path, monkeypatch):
     data_file.write_text("b\n")
     with pytest.raises(SystemExit):
         verify([data_file], path=manifest)
+
+
+def test_upload_limits_files_to_selected_features(tmp_path, monkeypatch):
+    import huggingface_hub
+
+    from asl_translate import data as data_module
+
+    processed = tmp_path / "processed"
+    for path in ("splits", "landmarks/rtmw/train"):
+        (processed / path).mkdir(parents=True)
+    (processed / "splits/vocab.txt").touch()
+    (processed / "video_index.json").touch()
+    (processed / "landmarks/rtmw/metadata.json").touch()
+    calls = []
+
+    class Api:
+        def upload_folder(self, **kwargs):
+            calls.append(kwargs)
+            return type("Info", (), {"oid": "revision"})()
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    monkeypatch.setattr(data_module, "verify", lambda paths: None)
+    manager = data_module.DataManager({"processed": processed, "processed_hub": {"repo": "org/data"}})
+    manager.upload_features("rtmw", ["train"])
+    assert calls[0]["allow_patterns"] == ["splits/**", "video_index.json", "landmarks/rtmw/train/**", "landmarks/rtmw/metadata.json"]
+
+    with pytest.raises(SystemExit, match="Missing"):
+        manager.upload_features("rtmw", ["test"])
+    assert len(calls) == 1

@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from asl_translate.landmarks import NUM_LANDMARKS, PARTS, read_frames, to_array
+from asl_translate.pose import NUM_LANDMARKS, PARTS, MediaPipeEstimator
+from asl_translate.video import read_frames
 
 
 def test_to_array_places_parts_and_marks_missing_as_nan():
@@ -14,7 +15,7 @@ def test_to_array_places_parts_and_marks_missing_as_nan():
         left_hand_landmarks=[],
         right_hand_landmarks=[point] * 21,
     )
-    frame = to_array(result)
+    frame = MediaPipeEstimator.to_array(result)
     assert frame.shape == (NUM_LANDMARKS, 3)
     assert np.isnan(frame[PARTS["left_hand"]]).all()
     assert not np.isnan(np.delete(frame, PARTS["left_hand"], axis=0)).any()

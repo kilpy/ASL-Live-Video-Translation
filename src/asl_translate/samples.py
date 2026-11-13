@@ -16,9 +16,9 @@ import numpy as np
 import pandas as pd
 
 from asl_translate.config import REPO_ROOT, load_config
-from asl_translate.dataset import annotation_path, load_annotations, load_video_index, verify
-from asl_translate.features import open_shard
-from asl_translate.landmarks import PARTS, extract, read_frames
+from asl_translate.data import DataManager, annotation_path, load_annotations, verify
+from asl_translate.pose import PARTS, MediaPipeEstimator
+from asl_translate.video import open_shard, read_frames
 
 OUT_DIR = REPO_ROOT / "reports" / "samples"  # git-ignored: contains signers' faces
 NUM_CLIPS, NUM_FRAMES = 4, 5
@@ -43,6 +43,7 @@ def select_samples(df: pd.DataFrame, videos: dict) -> pd.DataFrame:
 
 
 def pick(items: list, count: int = NUM_FRAMES) -> list:
+    """Select evenly spaced items, repeating items if necessary."""
     return [items[i] for i in np.linspace(0, len(items) - 1, count).astype(int)]
 
 
@@ -75,6 +76,7 @@ def crop(image: np.ndarray, points: np.ndarray, size: int = 112) -> np.ndarray:
 
 
 def show_grid(rows: list[tuple[str, list[np.ndarray]]], out: Path, title: str) -> None:
+    """Save labeled rows of BGR images as a grid."""
     fig, axes = plt.subplots(len(rows), NUM_FRAMES, figsize=(13, 2.4 * len(rows)), squeeze=False)
     for row, (label, images) in zip(axes, rows):
         for ax, image in zip(row, images):
@@ -92,11 +94,12 @@ def show_grid(rows: list[tuple[str, list[np.ndarray]]], out: Path, title: str) -
 
 
 def main() -> None:
+    """Extract and visualize MediaPipe landmarks for validation examples."""
     data = load_config()["data"]
     root = data["root"]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     verify([annotation_path(data, split) for split in ("train", "val")])
-    videos = load_video_index(data)["val"]
+    videos = DataManager(data).load_video_index()["val"]
     chosen = select_samples(load_annotations(data, "val"), videos)
     (root / "samples").mkdir(parents=True, exist_ok=True)
 
@@ -125,7 +128,7 @@ def main() -> None:
                 continue
             frames = [frame for _, frame in sampled]
             start = time.perf_counter()
-            marks = extract(iter(sampled))
+            marks = MediaPipeEstimator().extract(iter(sampled))
             seconds = time.perf_counter() - start
             np.save(root / "samples" / f"{clip['SENTENCE_NAME']}.npy", marks)
 

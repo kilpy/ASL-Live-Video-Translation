@@ -1,7 +1,9 @@
 """BASELINE model: pose GRU encoder + Transformer decoder over word tokens.
 
-Shapes: B batch, T frames, L tokens, F features per frame (49 points x 2 coords + 3 detection
-flags = 101), D d_model (256), H GRU hidden per direction (128), V vocabulary incl. specials.
+Shapes: B batch, T frames, L tokens, F features per frame, D decoder width, H GRU
+hidden size per direction, V vocabulary including special tokens. F depends on the pose
+estimator: MediaPipe uses 49 points x 2 coordinates plus 3 detection flags (101);
+the other estimators use 65 or 67 points x 2 coordinates plus one detection flag per point.
 """
 import torch
 from torch import nn
@@ -21,12 +23,14 @@ class PoseGRUEncoder(nn.Module):
     def forward(self, frames: torch.Tensor) -> torch.Tensor:
         # frames: (B, T, F). Padded frames are zeros; the decoder masks them out with
         # memory_key_padding_mask.
+        """Encode frame features of shape (B, T, F) as (B, T, D)."""
         x = self.proj(frames)       # (B, T, D)
         hidden, _ = self.gru(x)     # (B, T, 2H): forward and backward states concatenated
         return self.out(hidden)     # (B, T, D): the "memory" the decoder attends to
 
 
 class Seq2Seq(nn.Module):
+    """Encode landmark sequences and decode text tokens autoregressively."""
     def __init__(self, in_dim: int, vocab_size: int, encoder: dict, decoder: dict,
                  max_tokens: int, pad_id: int):
         super().__init__()

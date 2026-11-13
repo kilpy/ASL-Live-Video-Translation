@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip("pyarrow")
 import pyarrow.parquet as pq
 
-from asl_translate.export_parquet import convert_partition
+from asl_translate.data import convert_partition
 
 
 @pytest.mark.parametrize("source,count,detected_count", [("mediapipe", 49, 3), ("rtmw", 65, 65)])

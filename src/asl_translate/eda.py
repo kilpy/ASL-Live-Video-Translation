@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from asl_translate.config import REPO_ROOT, load_config
-from asl_translate.dataset import annotation_path, load_annotations, tokenize  # noqa: F401
+from asl_translate.data import annotation_path, load_annotations, tokenize  # noqa: F401
 
 REPORT_DIR = REPO_ROOT / "reports" / "eda"
 VOCAB_SIZES = [500, 1000, 2000, 5000, 10000]  # 1000 is the Experiment Card's target
@@ -19,11 +19,13 @@ INK, MUTED, MARK = "#1f1f1f", "#6b6b6b", "#2a78b5"
 
 
 def load_splits(data: dict) -> dict[str, pd.DataFrame]:
+    """Load annotation splits that are present locally."""
     present = [s for s in data["splits"] if annotation_path(data, s).exists()]
     return {s: load_annotations(data, s) for s in present}
 
 
 def percentiles(values: pd.Series) -> dict[str, float]:
+    """Summarize a series with selected percentiles and its maximum."""
     q = values.quantile([0.05, 0.5, 0.95, 0.99])
     return {f"p{int(k * 100)}": round(float(v), 2) for k, v in q.items()} | {
         "max": round(float(values.max()), 2)
@@ -42,6 +44,7 @@ def vocab_coverage(df: pd.DataFrame, ranked: list[str], size: int) -> dict[str, 
 
 def summarize(frames: dict[str, pd.DataFrame], fps: int) -> dict:
     # Vocabulary comes from train alone so eval splits can't leak into it.
+    """Calculate per-split statistics, vocabulary coverage, and cross-split overlap."""
     vocab_split = "train" if "train" in frames else next(iter(frames))
     counts = Counter(w for t in frames[vocab_split]["TOKENS"] for w in t)
     ranked = [w for w, _ in counts.most_common()]
@@ -83,6 +86,7 @@ def summarize(frames: dict[str, pd.DataFrame], fps: int) -> dict:
 
 
 def plot(df: pd.DataFrame, ranked: list[str], split: str, out: Path) -> None:
+    """Save duration, sentence length, and vocabulary coverage plots for a split."""
     fig, axes = plt.subplots(1, 3, figsize=(13, 3.8))
     panels = [
         (axes[0], df["DURATION"].clip(upper=df["DURATION"].quantile(0.99)), "Clip duration (s)"),
@@ -126,10 +130,11 @@ def plot(df: pd.DataFrame, ranked: list[str], split: str, out: Path) -> None:
 
 
 def main() -> None:
+    """Generate annotation statistics and plots for available splits."""
     data = load_config()["data"]
     frames = load_splits(data)
     if not frames:
-        raise SystemExit("No annotations found; run `python -m asl_translate.dataset annotations`")
+        raise SystemExit("No annotations found; run `python -m asl_translate.data annotations`")
     summary = summarize(frames, data["fps"])
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)

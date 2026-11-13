@@ -1,16 +1,17 @@
-"""Extract landmarks for every sentence in the splits, cut from the full videos.
+"""Extract sentence-level pose features from full videos.
 
-Test on a few:  uv run python -m asl_translate.features extract --splits val --limit 5
-Full run:       uv run python -m asl_translate.features extract --splits train val --workers 4
-Smoke subset:   uv run python -m asl_translate.features smoke
+Test a few: uv run python -m asl_translate.features extract --splits val --limit 5
+Full run:   uv run python -m asl_translate.features extract --splits train val --workers 4
+Smoke data: uv run python -m asl_translate.features smoke
 
-Each sentence is cut at START_REALIGNED..END_REALIGNED from its full frontal video, run through
-the same MediaPipe path as the live stream (landmarks.py), and saved twice:
-- data/interim/holistic/<split>/<SENTENCE_NAME>.npz   all 553 landmarks, x y z, NaN if missed
-- data/processed/landmarks/<split>/<SENTENCE_NAME>.npz the model input (see `reduce`)
-Videos come from data/raw/<shard> if that shard was downloaded, else streamed from the mirror.
-Extraction is resumable: finished sentences are skipped. The test split is only extracted when
-asked for explicitly, for the one final evaluation.
+Use --pose_estimator to choose MediaPipe, OpenPose, ViTPose, RTMW, or DWPose.
+Sentence timings come from the realigned annotations. Videos are read from local shards
+when available, or streamed from the pinned mirror. Completed sentences are skipped;
+--offset and --limit allow chunked processing. The test split must be requested explicitly.
+
+MediaPipe saves full 553-point interim landmarks and reduced 49-point processed features.
+Other estimators save processed coordinates, detection masks, and confidence values in
+source-specific folders. See pose.py for each estimator's landmark layout.
 """
 import argparse
 import os
@@ -25,31 +26,15 @@ from pathlib import Path
 import numpy as np
 
 from asl_translate.config import load_config
-from asl_translate.dataset import (annotation_path, load_annotations, load_video_index, record,
-                                   verify)
+from asl_translate.data import DataManager, annotation_path, load_annotations, record, verify
+from asl_translate.pose import interpolate
+from asl_translate.video import open_shard
 
 POSE = slice(0, 33)
 LEFT_HAND, RIGHT_HAND = slice(511, 532), slice(532, 553)
 
 
 # ---------------------------------------------------------------- model input
-
-
-def interpolate(points: np.ndarray) -> np.ndarray:
-    """Fill NaN frames linearly in time, per coordinate; edges take the nearest value.
-
-    A part that is never detected in the sentence becomes zeros.
-    """
-    out = points.astype(np.float32).copy()
-    flat = out.reshape(len(out), -1)
-    t = np.arange(len(out))
-    for column in range(flat.shape[1]):
-        values = flat[:, column]
-        seen = ~np.isnan(values)
-        if seen.all():
-            continue
-        flat[:, column] = np.interp(t, t[seen], values[seen]) if seen.any() else 0.0
-    return out
 
 
 def reduce(holistic: np.ndarray, features: dict) -> dict[str, np.ndarray]:
@@ -71,26 +56,18 @@ def reduce(holistic: np.ndarray, features: dict) -> dict[str, np.ndarray]:
 
 
 def paths_for(data: dict, split: str, name: str, source: str = "mediapipe") -> tuple[Path, Path]:
-    from asl_translate.pose_sources import folder
+    """Return the interim and processed feature paths for a sentence."""
+    from asl_translate.pose import folder
 
     return (data["interim"] / ("holistic" if source == "mediapipe" else source) / split / f"{name}.npz",
             data["processed"] / folder(source) / split / f"{name}.npz")
 
 
-def open_shard(data: dict, shard: str):
-    local = data["raw"] / shard
-    if local.exists():
-        return open(local, "rb")
-    from huggingface_hub import HfFileSystem
-
-    hub = data["source_hub"]
-    return HfFileSystem().open(f"datasets/{hub['repo']}@{hub['revision']}/{shard}", "rb")
-
-
 def process_video(data: dict, split: str, video: str, shard: str, member: str,
                   sentences: list[tuple[str, float, float]], source: str = "mediapipe") -> tuple[str, int, float, str]:
-    """Copy one full video out of its shard, extract every sentence in it, delete the copy."""
-    from asl_translate.landmarks import extract, read_frames
+    """Extract each requested sentence from one video and remove its temporary copy."""
+    from asl_translate.pose import get_pose_estimator, prepare
+    from asl_translate.video import read_frames
 
     started, frames = time.time(), 0
     tmp = None
@@ -103,14 +80,11 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
         with open_shard(data, shard) as f, zipfile.ZipFile(f).open(member) as src:
             with open(tmp, "wb") as dst:
                 shutil.copyfileobj(src, dst, length=1 << 22)
+        estimator = get_pose_estimator(source)
         for name, start, end in sentences:
             holistic_path, model_path = paths_for(data, split, name, source)
             sampled = read_frames(tmp, data["fps"], start=start, end=end)
-            if source == "mediapipe":
-                holistic = extract(sampled)
-            else:
-                from asl_translate.pose_sources import extract as extract_pose
-                holistic = extract_pose(source, sampled, data["interim"] / "frames")
+            holistic = estimator.extract(sampled, data["interim"] / "frames")
             if len(holistic) == 0:  # segment shorter than one frame, or past the video's end
                 print(f"skipped {name}: no frames between {start:.2f}s and {end:.2f}s",
                       flush=True)
@@ -120,7 +94,6 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
                 np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
                 result = reduce(holistic, data["features"])
             else:
-                from asl_translate.pose_sources import prepare
                 result = prepare(holistic)
             model_path.parent.mkdir(parents=True, exist_ok=True)
             partial = model_path.with_suffix(".partial")
@@ -140,23 +113,26 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
 
 
 def read_split(data: dict, split: str) -> list[str]:
+    """Verify and read sentence IDs from a processed split list."""
     path = data["processed"] / "splits" / f"{split}.txt"
     verify([path])
     return path.read_text().split()
 
 
 def extraction_info() -> dict:
+    """Return the MediaPipe, OpenCV, and model versions used for extraction."""
     import cv2
     import mediapipe
 
-    from asl_translate.landmarks import MODEL_URL
+    from asl_translate.pose import MODEL_URL
 
     return {"mediapipe": mediapipe.__version__, "opencv": cv2.__version__, "model": MODEL_URL}
 
 
 def extract_splits(data: dict, splits: list[str], limit: int | None, workers: int,
                    offset: int = 0, source: str = "mediapipe") -> bool:
-    index = load_video_index(data)
+    """Process pending sentences by video and return whether all video jobs succeeded."""
+    index = DataManager(data).load_video_index()
     jobs = []
     for split in splits:
         verify([annotation_path(data, split)])
@@ -194,8 +170,8 @@ def extract_splits(data: dict, splits: list[str], limit: int | None, workers: in
 
 
 def build_smoke(data: dict, source: str = "mediapipe") -> None:
-    """Copy the smoke sentences' model inputs into data/processed/smoke/ and hash both folders."""
-    from asl_translate.pose_sources import folder
+    """Copy selected train and validation features into smoke folders and record hashes."""
+    from asl_translate.pose import folder
     dirs = []
     for split in ("train", "val"):
         names = read_split(data, f"smoke_{split}")
@@ -220,7 +196,8 @@ def build_smoke(data: dict, source: str = "mediapipe") -> None:
 
 
 def record_landmarks(data: dict, splits: list[str], source: str = "mediapipe") -> None:
-    from asl_translate.pose_sources import folder
+    """Record hashes for extracted splits and, when applicable, their source metadata."""
+    from asl_translate.pose import folder
     dirs = [data["processed"] / folder(source) / s for s in splits
             if (data["processed"] / folder(source) / s).exists()]
     if source != "mediapipe":
@@ -229,6 +206,7 @@ def record_landmarks(data: dict, splits: list[str], source: str = "mediapipe") -
 
 
 def main() -> None:
+    """Run feature extraction or build the smoke subset from command-line options."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("step", choices=["extract", "smoke"])
@@ -237,23 +215,23 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="process up to N sentences per split")
     parser.add_argument("--offset", type=int, default=0, help="skip N sentences per split")
     parser.add_argument("--workers", type=int, default=1)
-    from asl_translate.pose_sources import SOURCES
-    parser.add_argument("--source", choices=SOURCES, default="mediapipe")
+    from asl_translate.pose import SOURCES
+    parser.add_argument("--pose_estimator", choices=SOURCES, default="mediapipe")
     args = parser.parse_args()
     if args.offset < 0 or (args.limit is not None and args.limit <= 0):
         parser.error("--offset must be non-negative and --limit must be positive")
     data = load_config()["data"]
     if args.step == "extract":
-        if args.source != "mediapipe":
-            from asl_translate.pose_sources import check_metadata
-            check_metadata(data, args.source)
-        succeeded = extract_splits(data, args.splits, args.limit, args.workers, args.offset, args.source)
+        if args.pose_estimator != "mediapipe":
+            from asl_translate.pose import check_metadata
+            check_metadata(data, args.pose_estimator)
+        succeeded = extract_splits(data, args.splits, args.limit, args.workers, args.offset, args.pose_estimator)
         if not succeeded:
             raise SystemExit("Extraction failed for one or more videos; rerun to retry")
         if args.limit is None and args.offset == 0:
-            record_landmarks(data, args.splits, args.source)
+            record_landmarks(data, args.splits, args.pose_estimator)
     else:
-        build_smoke(data, args.source)
+        build_smoke(data, args.pose_estimator)
 
 
 if __name__ == "__main__":

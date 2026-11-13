@@ -3,6 +3,7 @@ import cv2
 
 
 def main(camera_index: int = 0) -> None:
+    """Display webcam frames until the user quits."""
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         raise SystemExit(f"Could not open camera {camera_index}")

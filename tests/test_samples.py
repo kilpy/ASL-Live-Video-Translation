@@ -39,9 +39,9 @@ def test_samples_use_indexed_validation_videos_and_aligned_ranges(tmp_path, monk
     monkeypatch.setattr(samples, "load_config", lambda: {"data": data})
     monkeypatch.setattr(samples, "verify", lambda _: None)
     monkeypatch.setattr(samples, "annotation_path", lambda *_: tmp_path / "annotations.csv")
-    monkeypatch.setattr(samples, "load_video_index", lambda _: {"val": videos})
+    monkeypatch.setattr(samples.DataManager, "load_video_index", lambda self: {"val": videos})
     monkeypatch.setattr(samples, "load_annotations", lambda *_: frame)
-    monkeypatch.setattr(samples, "extract", extract)
+    monkeypatch.setattr(samples, "MediaPipeEstimator", lambda: type("FakeEstimator", (), {"extract": staticmethod(extract)})())
 
     samples.main()
 

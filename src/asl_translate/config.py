@@ -12,6 +12,7 @@ MANIFEST_PATH = REPO_ROOT / "data" / "manifest.json"
 
 
 def load_config(approach: str | None = None, path: Path = CONFIG_PATH) -> dict:
+    """Load configuration and resolve data paths, optionally for one approach."""
     cfg = yaml.safe_load(Path(path).read_text())
     root = Path(os.environ.get("ASL_DATA_ROOT", cfg["data"]["root"]))
     root = root if root.is_absolute() else REPO_ROOT / root
@@ -39,7 +40,7 @@ def load_config(approach: str | None = None, path: Path = CONFIG_PATH) -> dict:
 
 
 def set_seed(seed: int) -> None:
-    """Seed every source of randomness we use. Called at the start of every entry point."""
+    """Seed Python, NumPy, and PyTorch and request deterministic PyTorch operations."""
     random.seed(seed)
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
