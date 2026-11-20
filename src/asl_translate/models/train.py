@@ -61,16 +61,27 @@ def normalize(points: np.ndarray, source: str = "mediapipe") -> np.ndarray:
     return (points - center) / scale
 
 
+def frame_features(points: np.ndarray, detected: np.ndarray, max_frames: int,
+                   source: str = "mediapipe") -> np.ndarray:
+    """(T, P, 2) points and (T, K) detection flags -> (T', P*2 + K) model input, T' <= max_frames.
+
+    Shared by training and live inference so both see exactly the same preprocessing.
+    """
+    points, detected = points.astype(np.float32), detected.astype(np.float32)
+    features = np.concatenate([normalize(points, source).reshape(len(points), -1), detected],
+                              axis=1)
+    if len(features) > max_frames:  # keep the whole sentence, evenly subsampled
+        features = features[np.linspace(0, len(features) - 1, max_frames).astype(int)]
+    return features
+
+
 def load_split(folder: Path, sentences: dict[str, str], words: dict[str, int],
                max_frames: int, max_tokens: int, source: str = "mediapipe") -> list[tuple[np.ndarray, list[int], str]]:
     """Load feature files, normalize points, and tokenize sentence references."""
     examples = []
     for path in sorted(folder.glob("*.npz"), key=lambda p: p.name):  # same order on every OS
         with np.load(path) as f:
-            points, detected = f["points"].astype(np.float32), f["detected"].astype(np.float32)
-        features = np.concatenate([normalize(points, source).reshape(len(points), -1), detected], axis=1)
-        if len(features) > max_frames:  # keep the whole sentence, evenly subsampled
-            features = features[np.linspace(0, len(features) - 1, max_frames).astype(int)]
+            features = frame_features(f["points"], f["detected"], max_frames, source)
         reference = " ".join(tokenize(sentences[path.stem]))
         ids = [words[BOS]] + [words.get(w, words[UNK]) for w in reference.split()]
         examples.append((features, (ids[: max_tokens - 1] + [words[EOS]]), reference))
@@ -180,7 +191,13 @@ def main() -> None:
     if args.pose_estimator != "mediapipe":
         run_dir = cfg["run_dir"] / args.pose_estimator / ("smoke" if args.smoke else "full") / f"seed_{seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), run_dir / "model.pt")
+    # Everything live inference needs, so the demo runs without the dataset (see infer.py).
+    torch.save({"state_dict": model.state_dict(), "itos": itos, "in_dim": in_dim,
+                "encoder": cfg["encoder"], "decoder": cfg["decoder"],
+                "max_frames": train_cfg["max_frames"], "max_tokens": train_cfg["max_tokens"],
+                "source": args.pose_estimator, "fps": data["fps"],
+                "features": data["features"], "approach": args.approach, "seed": seed},
+               run_dir / "model.pt")
 
     manifest = read_manifest()["files"]
     data_keys = sorted(manifest_key(p) for p in used)

@@ -45,4 +45,11 @@ src = ["src", "tests"]
 testpaths = ["tests"]
 
 [tool.uv.sources]
+torch = [{ index = "pytorch-cu132", marker = "sys_platform != 'darwin'" }]
 easy-vitpose = { git = "https://github.com/JunkyByte/easy_ViTPose.git", rev = "bb9860359e55b099a507c8000e360d48a27cc36d" }
+
+# CUDA build of PyTorch on Windows/Linux (RTX 3080 dev machine); macOS keeps the PyPI build (MPS).
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
