@@ -69,6 +69,7 @@ class Decoder(nn.Module):
             batch_first=True, dropout=dropout if num_layers > 1 else 0.0,
         )
         self.attn_combine = nn.Linear(hidden_dim * 2, hidden_dim)
+        #chose two linear layers from WASL paper 
         self.out = nn.Linear(hidden_dim, vocab_size)
         self.dropout = nn.Dropout(dropout)
 
