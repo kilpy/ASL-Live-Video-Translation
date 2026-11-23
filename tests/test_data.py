@@ -27,7 +27,8 @@ def test_every_approach_shares_the_data_block():
 def test_approach_resolves_encoder_and_decoder_blocks():
     baseline = load_config("BASELINE")
     assert baseline["encoder"]["name"] == "pose_gru"
-    assert baseline["encoder"]["features"] == "landmarks"
+    assert baseline["encoder"]["source"] == "mediapipe"
+    assert load_config("DEEP")["training"]["batch_size"] == 4  # per-approach override
     assert baseline["decoder"]["name"] == "transformer"
 
 

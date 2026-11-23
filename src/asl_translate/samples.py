@@ -17,6 +17,7 @@ import pandas as pd
 
 from asl_translate.config import REPO_ROOT, load_config
 from asl_translate.data import DataManager, annotation_path, load_annotations, verify
+from asl_translate.dino import crop
 from asl_translate.pose import PARTS, MediaPipeEstimator
 from asl_translate.video import open_shard, read_frames
 
@@ -58,21 +59,6 @@ def draw(canvas: np.ndarray, frame: np.ndarray) -> np.ndarray:
                 radius = width // 400 if part == "face" else width // 160
                 cv2.circle(canvas, (int(x * width), int(y * height)), radius, COLORS[part], -1)
     return canvas
-
-
-def crop(image: np.ndarray, points: np.ndarray, size: int = 112) -> np.ndarray:
-    """Square crop around landmarks; black if the part wasn't detected."""
-    if np.isnan(points).any():
-        return np.zeros((size, size, 3), dtype=np.uint8)
-    height, width = image.shape[:2]
-    xs, ys = points[:, 0] * width, points[:, 1] * height
-    half = max(np.ptp(xs), np.ptp(ys)) * 0.7 + 1  # 0.7: 40% padding around the box
-    cx, cy = (xs.min() + xs.max()) / 2, (ys.min() + ys.max()) / 2
-    x0, x1 = int(max(cx - half, 0)), int(min(cx + half, width))
-    y0, y1 = int(max(cy - half, 0)), int(min(cy + half, height))
-    if x0 >= x1 or y0 >= y1:
-        return np.zeros((size, size, 3), dtype=np.uint8)
-    return cv2.resize(image[y0:y1, x0:x1], (size, size))
 
 
 def show_grid(rows: list[tuple[str, list[np.ndarray]]], out: Path, title: str) -> None:

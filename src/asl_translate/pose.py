@@ -15,8 +15,9 @@ import numpy as np
 from asl_translate.config import REPO_ROOT, get_device
 from asl_translate.data import sha256
 
-SOURCES = ("mediapipe", "openpose", "vitpose", "rtmw", "dwpose")
-SHOULDERS = {"mediapipe": (1, 2), "openpose": (5, 2), "vitpose": (5, 6),
+# dinov2 = MediaPipe Holistic landmarks + DINOv2 face/hand crop vectors (dino.py)
+SOURCES = ("mediapipe", "openpose", "vitpose", "rtmw", "dwpose", "dinov2")
+SHOULDERS = {"mediapipe": (1, 2), "dinov2": (1, 2), "openpose": (5, 2), "vitpose": (5, 6),
              "rtmw": (5, 6), "dwpose": (5, 6)}
 
 
@@ -52,6 +53,11 @@ def extraction_metadata(data: dict, source: str) -> dict:
         runtime = {"backend": "rtmlib YOLOX-tiny CPU + wholebody CoreML",
                    "rtmlib": version("rtmlib"), "onnxruntime": version("onnxruntime"),
                    "detector_device": "cpu", "pose_device": "coreml"}
+    elif source == "dinov2":
+        from asl_translate.dino import MODEL
+        files = {}
+        runtime = {"backend": "MediaPipe Holistic crops + DINOv2", "model": MODEL,
+                   "mediapipe": version("mediapipe"), "transformers": version("transformers")}
     else:
         raise ValueError(source)
     missing = [str(p) for p in files.values() if not p.is_file()]
@@ -324,5 +330,7 @@ def get_pose_estimator(source: str) -> PoseEstimator:
         return ViTPoseEstimator()
     if source in ("rtmw", "dwpose"):
         return RTMEstimator(source)
+    if source == "dinov2":  # landmarks for the crops; features.py adds the DINOv2 vectors
+        return MediaPipeEstimator()
     raise ValueError(f"Unknown feature source: {source}")
 

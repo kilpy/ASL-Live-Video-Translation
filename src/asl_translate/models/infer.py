@@ -4,17 +4,31 @@
     translator = Translator.load("models/BASELINE/full/seed_0/model.pt")
     text, confidence = translator.translate(points, detected)
 
-`points` and `detected` are what `features.reduce` returns, so the webcam demo and offline
+`points` and `detected` are what `features.reduce` returns (plus `dino.embed` crops for
+models trained on the dinov2 source, see `Translator.needs_crops`), so the webcam demo and offline
 evaluation share the preprocessing used in training (`train.frame_features`).
 """
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from asl_translate.config import get_device, load_config
-from asl_translate.models.baseline import Seq2Seq
-from asl_translate.models.train import BOS, EOS, PAD, UNK, frame_features
+from asl_translate.models.seq2seq import Seq2Seq
+from asl_translate.models.train import BOS, EOS, PAD, SEPARATOR, UNK, frame_features, normalize
+
+
+@dataclass
+class Explanation:
+    """A translation plus what the demo shows about how it was made."""
+    words: list[str]
+    probs: list[float]                     # probability of each chosen word
+    topk: list[list[tuple[str, float]]]    # best alternatives at each word, chosen word first
+    confidence: float
+    attention: np.ndarray                  # (words, T) decoder cross-attention over input frames
+    model_input: np.ndarray                # (T, P, 2) normalized points, as the model sees them
+    detected: np.ndarray                   # (T, 3) pose / left hand / right hand flags
 
 
 def _legacy_checkpoint(state_dict: dict, approach: str) -> dict:
@@ -42,9 +56,15 @@ class Translator:
         self.source = checkpoint["source"]
         self.fps = checkpoint["fps"]
         self.features = checkpoint["features"]
+        self.separator = SEPARATOR[checkpoint.get("units", "words")]
+        self.needs_crops = self.source == "dinov2"
+        state = checkpoint["state_dict"]
+        if "head.weight" in state:  # saved before the encoder/decoder registry
+            state = {k if k.startswith("encoder.") else
+                     "decoder." + k.replace("decoder.", "stack.", 1): v for k, v in state.items()}
         self.model = Seq2Seq(checkpoint["in_dim"], len(self.itos), checkpoint["encoder"],
                              checkpoint["decoder"], self.max_tokens, self.words[PAD])
-        self.model.load_state_dict(checkpoint["state_dict"])
+        self.model.load_state_dict(state)
         self.model.to(self.device).eval()
 
     @classmethod
@@ -55,12 +75,27 @@ class Translator:
             checkpoint = _legacy_checkpoint(checkpoint, approach)
         return cls(checkpoint, device)
 
-    def translate(self, points: np.ndarray, detected: np.ndarray) -> tuple[str, float]:
+    def translate(self, points: np.ndarray, detected: np.ndarray,
+                  crops: np.ndarray | None = None) -> tuple[str, float]:
         """(T, P, 2) points and (T, K) detection flags -> (sentence, confidence in [0, 1])."""
-        if len(points) == 0:
-            return "", 0.0
-        features = frame_features(points, detected, self.max_frames, self.source)
-        frames = torch.from_numpy(features)[None].to(self.device)                 # (1, T, F)
+        explanation = self.explain(points, detected, crops)
+        return self.separator.join(explanation.words), explanation.confidence
+
+    @torch.no_grad()
+    def explain(self, points: np.ndarray, detected: np.ndarray, crops: np.ndarray | None = None,
+                k: int = 3) -> Explanation:
+        """Translate, and keep per-word probabilities, alternatives and cross-attention.
+
+        Words are characters for a `units: chars` decoder (ByT5); join with `separator`.
+        """
+        if self.needs_crops and crops is None:
+            raise ValueError("This model was trained on dinov2 features: pass dino.embed crops")
+        total = len(points)
+        model_input = normalize(points.astype(np.float32), self.source) if total else points
+        if total == 0:
+            return Explanation([], [], [], 0.0, np.zeros((0, 0)), model_input, detected)
+        features = frame_features(points, detected, self.max_frames, self.source, crops)
+        frames = torch.from_numpy(features)[None].to(self.device)                 # (1, T', F)
         frame_pad = torch.zeros(frames.shape[:2], dtype=torch.bool, device=self.device)
         ids, logps = self.model.generate(frames, frame_pad, self.words[BOS], self.words[EOS],
                                          self.max_tokens)
@@ -68,6 +103,28 @@ class Translator:
         n = row.index(self.words[EOS]) if self.words[EOS] in row else len(row)
         # same confidence as train.evaluate: exp(mean log-probability, including EOS)
         confidence = float(logps[0, : n + 1].mean().exp())
+
+        # One teacher-forced pass over the greedy output reproduces each step's distribution
+        # (causal mask, eval mode) and lets us read the cross-attention for every word at once.
+        tokens = torch.tensor([[self.words[BOS]] + row[:n]], device=self.device)  # (1, n + 1)
+        logits, attention = self.model.decoder(tokens, self.model.encode(frames, frame_pad),
+                                               frame_pad, attention=True)
+        logits = logits[0, :n]
+        attention = attention[0, :n].float().cpu().numpy()                         # (n, T')
+        probs = logits.float().softmax(-1)                                         # (n, V)
+        top_p, top_i = probs.topk(min(k, probs.size(-1)), dim=-1)
+
+        # Map attention from the model frames back to every input frame. frame_features keeps
+        # them all up to max_frames, else subsamples evenly; give each input frame its nearest.
+        full = attention[:, np.round(np.linspace(0, len(features) - 1, total)).astype(int)]
+
         # greedy decoding can emit <pad>/<bos> from a weak model; they mean nothing to a reader
         hidden = {self.words[PAD], self.words[BOS]}
-        return " ".join(self.itos[i] for i in row[:n] if i not in hidden), confidence
+        keep = [i for i in range(n) if row[i] not in hidden]
+        return Explanation(
+            words=[self.itos[row[i]] for i in keep],
+            probs=[float(probs[i, row[i]]) for i in keep],
+            topk=[[(self.itos[j], float(p)) for j, p in zip(top_i[i].tolist(), top_p[i].tolist())]
+                  for i in keep],
+            confidence=confidence, attention=full[keep], model_input=model_input,
+            detected=detected)

@@ -29,6 +29,12 @@ vitpose = [
 ]
 rtm = ["rtmlib==0.0.16", "onnxruntime==1.31.1"]
 parquet = ["datasets==5.2.0", "pyarrow==26.0.1"]
+demo = [
+    "gradio>=6.32.0",
+]
+deep = [
+    "transformers>=5.23.0",
+]
 
 [build-system]
 requires = ["hatchling"]

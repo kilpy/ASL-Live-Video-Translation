@@ -12,7 +12,7 @@ import json
 import platform
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -22,13 +22,34 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from asl_translate.config import CONFIG_PATH, REPO_ROOT, get_device, load_config, set_seed
-from asl_translate.data import (DataManager, annotation_path, load_annotations, manifest_key,
-                                read_manifest, tokenize, verify)
-from asl_translate.models.baseline import Seq2Seq
+from asl_translate.data import (
+    DataManager,
+    annotation_path,
+    load_annotations,
+    manifest_key,
+    read_manifest,
+    tokenize,
+    verify,
+)
+from asl_translate.models.seq2seq import Seq2Seq
 from asl_translate.pose import SHOULDERS, folder
 
 RESULTS = REPO_ROOT / "reports" / "results.jsonl"
 PAD, BOS, EOS, UNK = "<pad>", "<bos>", "<eos>", "<unk>"
+# Token units a decoder writes (its config's `units`): vocab.txt words, or characters for ByT5.
+# ponytail: chars are latin-1 code points, not UTF-8 bytes; How2Sign text is ASCII after tokenize
+SEPARATOR = {"words": " ", "chars": ""}
+
+
+def vocabulary(units: str, data: dict) -> list[str]:
+    """id -> token: the four specials, then the vocab.txt words or the 256 byte values."""
+    tokens = ([chr(b) for b in range(256)] if units == "chars" else
+              (data["processed"] / "splits" / "vocab.txt").read_text().split())
+    return [PAD, BOS, EOS, UNK] + tokens
+
+
+def pieces(text: str, units: str) -> list[str]:
+    return list(text) if units == "chars" else text.split()
 
 
 # ---------------------------------------------------------------- data
@@ -62,28 +83,33 @@ def normalize(points: np.ndarray, source: str = "mediapipe") -> np.ndarray:
 
 
 def frame_features(points: np.ndarray, detected: np.ndarray, max_frames: int,
-                   source: str = "mediapipe") -> np.ndarray:
-    """(T, P, 2) points and (T, K) detection flags -> (T', P*2 + K) model input, T' <= max_frames.
+                   source: str = "mediapipe", crops: np.ndarray | None = None) -> np.ndarray:
+    """(T, P, 2) points, (T, K) detection flags and optional (T, 3, C) DINOv2 crop vectors
+    -> (T', [3C +] P*2 + K) model input, T' <= max_frames.
 
     Shared by training and live inference so both see exactly the same preprocessing.
     """
     points, detected = points.astype(np.float32), detected.astype(np.float32)
-    features = np.concatenate([normalize(points, source).reshape(len(points), -1), detected],
-                              axis=1)
+    parts = [normalize(points, source).reshape(len(points), -1), detected]
+    if crops is not None:  # first, where SHuBERTEncoder expects them
+        parts.insert(0, crops.astype(np.float32).reshape(len(points), -1))
+    features = np.concatenate(parts, axis=1)
     if len(features) > max_frames:  # keep the whole sentence, evenly subsampled
         features = features[np.linspace(0, len(features) - 1, max_frames).astype(int)]
     return features
 
 
 def load_split(folder: Path, sentences: dict[str, str], words: dict[str, int],
-               max_frames: int, max_tokens: int, source: str = "mediapipe") -> list[tuple[np.ndarray, list[int], str]]:
+               max_frames: int, max_tokens: int, source: str = "mediapipe",
+               units: str = "words") -> list[tuple[np.ndarray, list[int], str]]:
     """Load feature files, normalize points, and tokenize sentence references."""
     examples = []
     for path in sorted(folder.glob("*.npz"), key=lambda p: p.name):  # same order on every OS
         with np.load(path) as f:
-            features = frame_features(f["points"], f["detected"], max_frames, source)
+            features = frame_features(f["points"], f["detected"], max_frames, source,
+                                      f["crops"] if "crops" in f.files else None)
         reference = " ".join(tokenize(sentences[path.stem]))
-        ids = [words[BOS]] + [words.get(w, words[UNK]) for w in reference.split()]
+        ids = [words[BOS]] + [words.get(w, words[UNK]) for w in pieces(reference, units)]
         examples.append((features, (ids[: max_tokens - 1] + [words[EOS]]), reference))
     return examples
 
@@ -103,7 +129,7 @@ def collate(batch, pad_id: int):
 
 
 def evaluate(model: Seq2Seq, loader: DataLoader, itos: list[str], words: dict[str, int],
-             device: torch.device, max_tokens: int) -> dict:
+             device: torch.device, max_tokens: int, separator: str = " ") -> dict:
     """Generate validation translations and calculate BLEU and mean confidence."""
     model.eval()
     hypotheses, references, confidences = [], [], []
@@ -112,7 +138,7 @@ def evaluate(model: Seq2Seq, loader: DataLoader, itos: list[str], words: dict[st
                                     words[EOS], max_tokens)
         for row, row_logp in zip(ids.tolist(), logps.cpu()):
             n = row.index(words[EOS]) if words[EOS] in row else len(row)
-            hypotheses.append(" ".join(itos[i] for i in row[:n]))
+            hypotheses.append(separator.join(itos[i] for i in row[:n]))
             # Experiment Card field 8: confidence = exp(mean log-probability of the words)
             confidences.append(float(row_logp[: n + 1].mean().exp()))
         references.extend(refs)
@@ -135,13 +161,17 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seed", type=int, default=None, help="default: first seed in config")
     parser.add_argument("--device", default=None, help="override training.device: cpu, mps, cuda, or auto")
-    parser.add_argument("--pose_estimator", choices=list(SHOULDERS), default="mediapipe")
+    parser.add_argument("--pose_estimator", choices=list(SHOULDERS), default=None,
+                        help="feature source; default: the encoder's `source` in the config")
     args = parser.parse_args()
 
     cfg = load_config(args.approach)
     seed = cfg["seeds"][0] if args.seed is None else args.seed
+    args.pose_estimator = args.pose_estimator or cfg["encoder"].get("source", "mediapipe")
+    units = cfg["decoder"].get("units", "words")
     set_seed(seed)
     train_cfg = {**cfg["training"], **(cfg["training"]["smoke"] if args.smoke else {})}
+    train_cfg["max_tokens"] = cfg["decoder"].get("max_tokens", train_cfg["max_tokens"])
     device = get_device(args.device or train_cfg["device"])
     data, started = cfg["data"], time.time()
     commit = git("rev-parse", "HEAD")
@@ -149,7 +179,7 @@ def main() -> None:
     dirty = bool(git("status", "--porcelain", "--", ".", ":!reports/results.jsonl"))
 
     used = ensure_data(data, args.smoke, args.pose_estimator)
-    itos = [PAD, BOS, EOS, UNK] + (data["processed"] / "splits" / "vocab.txt").read_text().split()
+    itos = vocabulary(units, data)
     words = {w: i for i, w in enumerate(itos)}
     sentences = {}
     for split in ("train", "val"):
@@ -157,7 +187,8 @@ def main() -> None:
         sentences.update(zip(df["SENTENCE_NAME"], df["SENTENCE"]))
     root = data["processed"] / folder(args.pose_estimator, args.smoke)
     splits = {s: load_split(root / s, sentences, words, train_cfg["max_frames"],
-                            train_cfg["max_tokens"], args.pose_estimator) for s in ("train", "val")}
+                            train_cfg["max_tokens"], args.pose_estimator, units)
+              for s in ("train", "val")}
     print(f"train {len(splits['train'])} / val {len(splits['val'])} sentences on {device}")
 
     generator = torch.Generator().manual_seed(seed)
@@ -186,7 +217,8 @@ def main() -> None:
             total += loss.item()
         print(f"epoch {epoch}: train loss {total / len(loaders['train']):.3f}")
 
-    metrics = evaluate(model, loaders["val"], itos, words, device, train_cfg["max_tokens"])
+    metrics = evaluate(model, loaders["val"], itos, words, device, train_cfg["max_tokens"],
+                       SEPARATOR[units])
     run_dir = cfg["run_dir"] / ("smoke" if args.smoke else "full") / f"seed_{seed}"
     if args.pose_estimator != "mediapipe":
         run_dir = cfg["run_dir"] / args.pose_estimator / ("smoke" if args.smoke else "full") / f"seed_{seed}"
@@ -195,15 +227,17 @@ def main() -> None:
     torch.save({"state_dict": model.state_dict(), "itos": itos, "in_dim": in_dim,
                 "encoder": cfg["encoder"], "decoder": cfg["decoder"],
                 "max_frames": train_cfg["max_frames"], "max_tokens": train_cfg["max_tokens"],
-                "source": args.pose_estimator, "fps": data["fps"],
+                "source": args.pose_estimator, "fps": data["fps"], "units": units,
                 "features": data["features"], "approach": args.approach, "seed": seed},
                run_dir / "model.pt")
 
     manifest = read_manifest()["files"]
     data_keys = sorted(manifest_key(p) for p in used)
     result = {
-        "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "time": datetime.now(UTC).isoformat(timespec="seconds"),
         "approach": args.approach,
+        "encoder": cfg["encoder"]["name"],
+        "decoder": cfg["decoder"]["name"],
         "source": args.pose_estimator,
         "smoke": args.smoke,
         "seed": seed,

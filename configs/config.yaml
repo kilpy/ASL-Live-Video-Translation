@@ -59,38 +59,52 @@ metrics:
   bleurt_checkpoint: BLEURT-20-D3  # small enough for CPU; full runs may use BLEURT-20
   also: [sacrebleu]
 
-# Encoders and decoders are plug-ins: add an entry here, then reference it by name below.
+# Encoders and decoders are plug-ins (models/encoders.py, models/decoders.py): add an entry here,
+# then reference it by name below. Any encoder pairs with any decoder; the encoder's last layer
+# fuses into the decoder's width. `source` is the feature extractor an encoder trains on by
+# default (train.py --pose_estimator overrides it); a decoder's `units` is what it writes.
 encoders:
   pose_gru:
-    features: landmarks
-    pretrained: false
+    source: mediapipe  # any pose estimator works: landmarks only
     hidden: 128        # per direction
     layers: 2
     bidirectional: true
     dropout: 0.1
-  dinov2_shubert:
-    features: crops_and_pose
-    pretrained: true
-    frozen: true
+  shubert:             # SHuBERT architecture (ACL 2025), trained here: no public weights found
+    source: dinov2     # DINOv2-small face / left hand / right hand crops + MediaPipe pose
+    dino_dim: 384
+    width: 768         # paper size (HuBERT base); shrink if it overfits our ~2000 sentences
+    layers: 12
+    heads: 12
+    ff: 3072
+    dropout: 0.1
 
 decoders:
   rnn:
-    cell: gru
+    units: words
+    cell: gru          # or lstm
     attention: true
-    pretrained: false
+    d_model: 256
+    hidden: 256
+    layers: 2
+    dropout: 0.1
   transformer:
-    pretrained: false
+    units: words
     d_model: 256
     layers: 3
     heads: 4
     ff: 512
     dropout: 0.1
   byt5:
+    units: chars       # writes bytes, so it can spell words outside vocab.txt
+    max_tokens: 256    # characters; about p97 of train sentences
+    checkpoint: google/byt5-small
     pretrained: true
-    frozen: false  # fine-tuned on How2Sign
+    frozen: false      # fine-tuned on How2Sign; its encoder reads the SHuBERT memory
 
-# An approach is one encoder plus one decoder. Outputs go to models/<APPROACH>/seed_<n>/.
+# An approach is one encoder plus one decoder (plus optional `training` overrides).
+# Outputs go to models/<APPROACH>/.
 approaches:
   CLASSICAL: {encoder: pose_gru, decoder: rnn}
   BASELINE: {encoder: pose_gru, decoder: transformer}
-  DEEP: {encoder: dinov2_shubert, decoder: byt5, fusion: true}
+  DEEP: {encoder: shubert, decoder: byt5, training: {batch_size: 4, lr: 1.0e-4}}  # 4 fits 10 GB

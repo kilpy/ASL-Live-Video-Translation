@@ -30,10 +30,10 @@ def load_config(approach: str | None = None, path: Path = CONFIG_PATH) -> dict:
         "name": approach,
         "data": cfg["data"],
         "seeds": cfg["seeds"],
-        "training": cfg["training"],
         "metrics": cfg["metrics"],
         "run_dir": REPO_ROOT / "models" / approach,
         **spec,
+        "training": {**cfg["training"], **spec.get("training", {})},  # per-approach overrides
         "encoder": {"name": spec["encoder"], **cfg["encoders"][spec["encoder"]]},
         "decoder": {"name": spec["decoder"], **cfg["decoders"][spec["decoder"]]},
     }

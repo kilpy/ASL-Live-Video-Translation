@@ -4,7 +4,8 @@ Test a few: uv run python -m asl_translate.features extract --splits val --limit
 Full run:   uv run python -m asl_translate.features extract --splits train val --workers 4
 Smoke data: uv run python -m asl_translate.features smoke
 
-Use --pose_estimator to choose one or more of MediaPipe, OpenPose, ViTPose, RTMW, or DWPose.
+Use --pose_estimator to choose one or more of MediaPipe, OpenPose, ViTPose, RTMW, DWPose, or
+dinov2 (MediaPipe landmarks plus DINOv2 face/hand crop vectors for SHuBERT; `--group deep`).
 Sentence timings come from the realigned annotations. Videos are read from local shards
 when available, or streamed from the pinned mirror. Completed sentences are skipped;
 --offset and --limit allow chunked processing. The test split must be requested explicitly.
@@ -91,7 +92,12 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
                 for name, start, end in pending:
                     holistic_path, model_path = paths_for(data, split, name, source)
                     sampled = read_frames(tmp, data["fps"], start=start, end=end)
-                    holistic = estimator.extract(sampled, data["interim"] / "frames")
+                    cached = paths_for(data, split, name)[0]  # MediaPipe's interim landmarks
+                    if source == "dinov2" and cached.exists():
+                        with np.load(cached) as f:
+                            holistic = f["landmarks"].astype(np.float32)
+                    else:
+                        holistic = estimator.extract(sampled, data["interim"] / "frames")
                     if len(holistic) == 0:
                         print(f"skipped {name}: no frames between {start:.2f}s and {end:.2f}s",
                               flush=True)
@@ -100,6 +106,13 @@ def process_video(data: dict, split: str, video: str, shard: str, member: str,
                         holistic_path.parent.mkdir(parents=True, exist_ok=True)
                         np.savez_compressed(holistic_path, landmarks=holistic.astype(np.float16))
                         result = reduce(holistic, data["features"])
+                    elif source == "dinov2":
+                        from asl_translate.dino import embed
+                        # second pass over the same frames: holding a sentence of HD frames
+                        # in memory costs GBs
+                        crops = embed(read_frames(tmp, data["fps"], start=start, end=end),
+                                      holistic)
+                        result = {**reduce(holistic, data["features"]), "crops": crops}
                     else:
                         result = prepare(holistic)
                     model_path.parent.mkdir(parents=True, exist_ok=True)
